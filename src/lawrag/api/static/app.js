@@ -182,10 +182,10 @@ function errorBox(err) {
   } else if (isStack) {
     heading = 'Модели не загружены. ';
     remedy = h('div', { style: 'margin-top:6px' },
-      'Сервер запущен интерпретатором, в котором нет нужного пакета. ',
-      'Запустите его из виртуального окружения проекта — ',
-      h('span.mono', '.venv\\Scripts\\activate'), ', затем ',
-      h('span.mono', 'lawrag serve'), '.');
+      'Образ, из которого запущен сервер, не содержит нужного пакета. ',
+      'Пересоберите его со стеком весов — ',
+      h('span.mono', 'LAWRAG_TARGET=models docker compose build app'), ', затем ',
+      h('span.mono', 'docker compose up -d app'), '.');
   }
   return h('div.banner.bad', icon('i-warn'),
     h('div', h('strong', heading), detail, remedy));
@@ -1052,16 +1052,16 @@ async function viewMonitor(root) {
             'Конфигурация требует ',
             ...missing.map((m, i) => [i ? ', ' : '', h('span.mono', m.backend),
               ' (', h('span.mono', m.module), ')']),
-            ', но эти пакеты отсутствуют в интерпретаторе, из которого запущен сервер.',
+            ', но этих пакетов нет в образе, из которого запущен сервер.',
           ]
           : rt.answering_error,
         h('div', { style: 'margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' },
           h('span.dim', 'интерпретатор'), h('span.mono', rt.python || '—'),
-          rt.in_venv ? null : chip('вне venv', 'bad')),
+          rt.in_container ? null : chip('вне контейнера', 'bad')),
         h('div', { style: 'margin-top:7px' },
-          'Запустите сервер из окружения проекта: ',
-          h('span.mono', '.venv\\Scripts\\activate'), ' → ',
-          h('span.mono', 'lawrag serve'), '.'))));
+          'Пересоберите образ со стеком весов: ',
+          h('span.mono', 'LAWRAG_TARGET=models docker compose build app'), ' → ',
+          h('span.mono', 'docker compose up -d app'), '.'))));
   } else if (rt.llm && rt.llm.reachable === false) {
     root.append(h('div.banner.bad', icon('i-warn'),
       h('div',
@@ -1341,7 +1341,11 @@ function runtimeCard(rt) {
     ['бюджет контекста', `${n(rt.max_packet_tokens)} т.`, false],
     ['кросс-язык', rt.cross_language ? 'вкл' : 'выкл', false],
     ['база', rt.dsn, false],
-    ['интерпретатор', rt.python || '—', rt.in_venv === false],
+    ['интерпретатор', rt.python || '—', rt.in_container === false],
+    // What the environment changed out from under config/default.yaml.
+    ['переопределено средой',
+      (rt.env_overrides && rt.env_overrides.length) ? rt.env_overrides.join(', ') : '—',
+      false],
   ];
   // A definition list, not a table: half these values are long identifiers and
   // a right-aligned column breaks a DSN mid-word.

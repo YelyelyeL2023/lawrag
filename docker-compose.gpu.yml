@@ -1,0 +1,52 @@
+# GPU overlay. Nothing here changes what runs — only where the tensors live.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# or set both files once, in .env:
+#   COMPOSE_FILE=docker-compose.yml;docker-compose.gpu.yml
+#   COMPOSE_PATH_SEPARATOR=;
+#
+# Requires the NVIDIA Container Toolkit on the host (Docker Desktop on Windows
+# provides it for WSL2 when the driver is installed). Verify with:
+#   docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+#
+# It is a separate file rather than a flag because a device reservation that
+# cannot be satisfied is a hard startup failure: the base compose file has to
+# stay runnable on a machine without a card.
+
+services:
+  app:
+    environment:
+      # The embedder goes to the card; the reranker deliberately stays on the
+      # CPU so the 8 GB of VRAM is left to the generator.
+      LAWRAG_EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
+      LAWRAG_RERANK_DEVICE: ${RERANK_DEVICE:-cpu}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  cli:
+    environment:
+      LAWRAG_EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
+      LAWRAG_RERANK_DEVICE: ${RERANK_DEVICE:-cpu}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  llm:
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -89,11 +89,14 @@ def fetch(out: Path = typer.Argument(..., help="Directory to write the snapshot 
           config: Optional[str] = ConfigOpt):
     """Download a corpus snapshot from adilet. Runs on the CONNECTED side only.
 
-    TLS note: httpx verifies against certifi, not the OS trust store, so a
-    "certificate verify failed / unable to get local issuer" error usually means
-    the signing root is trusted by your OS but missing from certifi. Install
-    truststore (`pip install truststore`) to use the OS store automatically, or
-    point --ca-bundle at a PEM with the missing root.
+    TLS note: httpx verifies against certifi, so a "certificate verify failed /
+    unable to get local issuer" error usually means the signing root is trusted
+    by the machine but missing from certifi. Inside a container the host's trust
+    store is not visible either, so the fix is to hand the root in explicitly:
+    mount the PEM and pass --ca-bundle (or set LAWRAG_CA_BUNDLE), e.g.
+
+        docker compose run --rm -v /path/root.pem:/certs/root.pem:ro
+            cli fetch --ca-bundle /certs/root.pem
     """
     from .ingest.fetch_adilet import build_plan, fetch as do_fetch
 

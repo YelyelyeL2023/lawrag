@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +138,10 @@ class Config:
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     data_dir: str = "data"
     log_level: str = "INFO"
+    # Filled in by load_config, not read from YAML: which settings the
+    # environment overrode. The console reports it, because "the YAML says cuda
+    # but it is running on the CPU" is otherwise a silent contradiction.
+    env_overrides: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -155,6 +159,53 @@ def _merge(base: Any, override: dict[str, Any]) -> Any:
     return base
 
 
+def _coerce(raw: str, current: Any) -> Any:
+    """Environment values arrive as strings; the existing value names the type."""
+    if isinstance(current, bool):
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    if isinstance(current, int):
+        return int(raw)
+    if isinstance(current, float):
+        return float(raw)
+    return raw
+
+
+def _apply_env(cfg: Config) -> list[str]:
+    """Override any scalar setting from `LAWRAG_<SECTION>_<FIELD>`.
+
+    Containers are configured by environment, not by editing a file baked into
+    an image: the same image has to run against `db:5432` in compose and a
+    remote Postgres in production without a second copy of default.yaml. The
+    YAML stays the place where a setting is *reasoned about*; the environment is
+    where a deployment says where things are.
+
+    Section names match the dataclass attributes, so `embedding.model_path` is
+    `LAWRAG_EMBEDDING_MODEL_PATH` and `db.dsn` is `LAWRAG_DB_DSN`. Top-level
+    scalars drop the section: `LAWRAG_LOG_LEVEL`, `LAWRAG_DATA_DIR`.
+
+    Returns the names that were applied. A setting silently overridden by an
+    inherited environment variable is a long debugging session, so load_config
+    keeps the list and the console shows it.
+    """
+    applied: list[str] = []
+    for f in fields(cfg):
+        if f.name == "env_overrides":
+            continue
+        section = getattr(cfg, f.name)
+        if is_dataclass(section):
+            for sub in fields(section):
+                name = f"LAWRAG_{f.name.upper()}_{sub.name.upper()}"
+                if (raw := os.environ.get(name)) is not None:
+                    setattr(section, sub.name, _coerce(raw, getattr(section, sub.name)))
+                    applied.append(name)
+        else:
+            name = f"LAWRAG_{f.name.upper()}"
+            if (raw := os.environ.get(name)) is not None:
+                setattr(cfg, f.name, _coerce(raw, section))
+                applied.append(name)
+    return applied
+
+
 def load_config(path: str | Path | None = None) -> Config:
     """Config precedence, lowest to highest: defaults, YAML, .env, environment."""
     _load_dotenv()
@@ -163,6 +214,9 @@ def load_config(path: str | Path | None = None) -> Config:
     if p.exists():
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         _merge(cfg, raw)
+    # Alias for the pre-container spelling of LAWRAG_DB_DSN. Applied first, so
+    # that a deployment setting both gets the explicit name.
     if dsn := os.environ.get("LAWRAG_DSN"):
         cfg.db.dsn = dsn
+    cfg.env_overrides = _apply_env(cfg)
     return cfg

@@ -1,0 +1,24 @@
+# Build context hygiene. The corpus, the weights and the bundles are mounted at
+# run time, never baked into an image — an image carrying a snapshot of the law
+# would go stale silently, which is the one failure mode this project spends
+# the most effort preventing.
+.git/
+.gitignore
+.env
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Leftovers from the pre-container, host-interpreter era. Never copy a host
+# virtualenv into an image: its scripts hardcode the host's interpreter path.
+.venv/
+venv/
+
+models/
+data/bundles/
+data/snapshots/
+data/uploads/
+data/context_cache.json

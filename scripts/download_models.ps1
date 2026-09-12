@@ -1,16 +1,20 @@
-# Windows wrapper for scripts/download_models.py.
-# Installs huggingface_hub into the repo venv (light — no torch needed just to
-# download), then fetches BGE-M3 + BGE-reranker-v2-m3 into MODEL_DIR (D:\models).
+# Windows wrapper for scripts/download_models.py. CONNECTED side only.
+#
+# The download runs inside the lawrag `models` image — the same image that
+# later loads the weights. Nothing is installed into a host Python, and there
+# is no virtualenv: the old .venv\Scripts\python.exe path is gone.
 #
 #   scripts\download_models.ps1
-#   $env:MODEL_DIR="E:\weights"; scripts\download_models.ps1   # custom location
+#   $env:MODEL_DIR="E:\weights"; scripts\download_models.ps1
 $ErrorActionPreference = "Stop"
-$root   = Split-Path $PSScriptRoot -Parent
-$python = Join-Path $root ".venv\Scripts\python.exe"
-if (-not (Test-Path $python)) { $python = "python" }
+Set-Location (Split-Path $PSScriptRoot -Parent)
 
-Write-Host "==> ensuring huggingface_hub is installed in the venv"
-& $python -m pip install -U huggingface_hub
+if (-not $env:MODEL_DIR) { $env:MODEL_DIR = "./models" }
+New-Item -ItemType Directory -Force -Path $env:MODEL_DIR | Out-Null
 
-Write-Host "==> downloading models"
-& $python (Join-Path $root "scripts\download_models.py")
+Write-Host "==> downloading into $env:MODEL_DIR"
+docker compose --profile download run --rm download-models @args
+
+Write-Host ""
+Write-Host "Carry the MODEL_DIR tree across the air gap together with the images:"
+Write-Host "    docker save lawrag:models pgvector/pgvector:pg16 ghcr.io/ggml-org/llama.cpp:server-cuda -o lawrag-images.tar"

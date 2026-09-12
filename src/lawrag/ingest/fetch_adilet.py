@@ -100,8 +100,8 @@ def _build_ssl_verify(ca_bundle: str | None = None, insecure: bool = False):
         import certifi
 
         log.info("truststore not installed; verifying TLS against certifi %s. If a "
-                 "fetch fails with a certificate error, `pip install truststore` (uses "
-                 "the OS trust store) or pass --ca-bundle PATH.",
+                 "fetch fails with a certificate error, mount the missing root and "
+                 "pass --ca-bundle PATH.",
                  getattr(certifi, "__version__", "?"))
         return ssl.create_default_context(cafile=certifi.where())
 
@@ -151,11 +151,10 @@ def fetch(plans: list[FetchPlan], out_dir: Path, delay_s: float = DEFAULT_DELAY_
                         "against the trust store in use. The signing root is almost "
                         "certainly trusted by your OS but missing from certifi (a "
                         "corporate/antivirus TLS proxy, or the Kazakhstan national "
-                        "root). Fix by, in order of preference: `pip install truststore` "
-                        "(then lawrag uses the OS trust store automatically); pass "
-                        "--ca-bundle PATH to a PEM containing the missing root; or pass "
-                        "--insecure to skip verification (last resort, trusted network "
-                        "only)."
+                        "root). A container does not inherit the host's trust store, "
+                        "so hand the root in: mount the PEM and pass --ca-bundle PATH "
+                        "(or LAWRAG_CA_BUNDLE); failing that, pass --insecure to skip "
+                        "verification (last resort, trusted network only)."
                     )
                 continue
             path = out_dir / plan.filename

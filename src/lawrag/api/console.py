@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import re
 import sys
 import threading
@@ -83,8 +84,19 @@ def _jsonable(value: Any) -> Any:
 # Config says which backends to use; it cannot say whether the interpreter
 # running the server can actually load them. Those are different facts, and
 # conflating them is how a system reports "production ready" and then returns
-# HTTP 500 on the first question because uvicorn was started from the wrong
-# Python and FlagEmbedding is only installed in the venv.
+# HTTP 500 on the first question because the server is running the `runtime`
+# image, which carries no FlagEmbedding, against a config asking for bge-m3.
+
+def _in_container() -> bool:
+    """Whether this process is the containerised one compose starts.
+
+    LAWRAG_IN_CONTAINER is set in the image; /.dockerenv is the fallback for an
+    image someone built by hand. Neither is load-bearing — it is a diagnostic,
+    and the authoritative answer to "can this process answer questions" is
+    _missing_modules below.
+    """
+    return bool(os.environ.get("LAWRAG_IN_CONTAINER")) or Path("/.dockerenv").exists()
+
 
 def _required_modules(c: Config) -> list[dict]:
     """The third-party modules this configuration will import on first use."""
@@ -202,10 +214,16 @@ def stats() -> dict:
         "cross_language": c.retrieval.cross_language,
         "dsn": re.sub(r"//[^@/]*@", "//***@", c.db.dsn),
         # The interpreter is reported because it is the single most common cause
-        # of a missing module here: the venv has the weights stack, the system
-        # Python has only what pip put there globally.
+        # of a missing module here: the `models` image carries the weights
+        # stack, the `runtime` image deliberately does not. Running outside a
+        # container at all is worth saying out loud too — it means the process
+        # is not the one compose is managing.
         "python": sys.executable,
-        "in_venv": sys.prefix != sys.base_prefix,
+        "in_container": _in_container(),
+        # Which settings the environment overrode. Without it, a config file
+        # saying one thing and a running system doing another is a silent
+        # contradiction the operator has no way to see.
+        "env_overrides": sorted(c.env_overrides),
         "missing_modules": missing,
         "answering_error": _answering_error,
         # Named, not inferred, so the UI never has to guess why a banner is up.

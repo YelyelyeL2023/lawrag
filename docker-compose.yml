@@ -1,24 +1,35 @@
-# Postgres with pgvector. On the air-gapped machine, load this image from a
-# saved tarball (docker save / docker load) rather than pulling.
+# Everything lawrag needs, as containers. Nothing is installed on the host: no
+# Python, no virtualenv, no pip. `docker compose` is the only prerequisite.
 #
-# Published on 5433, not 5432, because this workstation also runs a native
-# Windows PostgreSQL on 5432. Inside the container Postgres still listens on
-# 5432 — only the host-side port is remapped.
+#   docker compose up -d                       db + api + console
+#   docker compose run --rm cli stats          any CLI command
+#   docker compose --profile llm up -d llm     the local generator
+#
+# On the air-gapped machine, load every image from a saved tarball
+# (docker save / docker load) rather than pulling.
+#
+# GPU: overlay docker-compose.gpu.yml on top of this file. See README.
+
 services:
+  # ---------------------------------------------------------------- db --
+  # Published on 5433, not 5432, because this workstation also runs a native
+  # Windows PostgreSQL on 5432. Inside the container Postgres still listens on
+  # 5432 — only the host-side port is remapped. Other containers reach it as
+  # db:5432 and ignore the published port entirely.
   db:
     image: pgvector/pgvector:pg16
     container_name: lawrag-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 2006
-      POSTGRES_DB: lawrag
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-2006}
+      POSTGRES_DB: ${POSTGRES_DB:-lawrag}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:${DB_HOST_PORT:-5433}:5432"
     volumes:
       - lawrag-pgdata:/var/lib/postgresql/data
       - ./sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d lawrag"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-lawrag}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -30,6 +41,155 @@ services:
       -c work_mem=64MB
       -c maintenance_work_mem=512MB
       -c effective_cache_size=4GB
+    restart: unless-stopped
+
+  # --------------------------------------------------------------- api --
+  app:
+    build:
+      context: .
+      # `models` carries torch + FlagEmbedding, which config/default.yaml's
+      # bge-m3 backends need. Set LAWRAG_TARGET=runtime for a much smaller
+      # image when the config uses the hash/echo placeholders or a remote
+      # embedding service.
+      target: ${LAWRAG_TARGET:-models}
+    image: lawrag:${LAWRAG_TARGET:-models}
+    container_name: lawrag-api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: &lawrag_env
+      # Wiring, not tuning. Every durable setting lives in config/default.yaml;
+      # these are the values that differ between a container and a host, and
+      # they override the YAML (see config.py: LAWRAG_<SECTION>_<FIELD>).
+      LAWRAG_DB_DSN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-2006}@db:5432/${POSTGRES_DB:-lawrag}
+      LAWRAG_EMBEDDING_MODEL_PATH: /models/bge-m3
+      LAWRAG_RERANK_MODEL_PATH: /models/bge-reranker-v2-m3
+      LAWRAG_EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      LAWRAG_RERANK_DEVICE: ${RERANK_DEVICE:-cpu}
+      LAWRAG_LLM_BASE_URL: http://llm:8080/v1
+      LAWRAG_LOG_LEVEL: ${LAWRAG_LOG_LEVEL:-INFO}
+    volumes: &lawrag_volumes
+      # Config and corpus are mounted, never baked in: an image carrying a
+      # snapshot of the law goes stale without any symptom.
+      #
+      # The container runs as uid 10001. Docker Desktop maps that transparently;
+      # on a Linux host, ./data must be writable by it — console uploads and
+      # data/context_cache.json land there.
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ${MODEL_DIR:-./models}:/models
+      # Live code. Drop this line for a sealed deployment image.
+      - ./src:/app/src
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  # --------------------------------------------------------------- cli --
+  # One-shot `lawrag` commands against the same image, config and database:
+  #   docker compose run --rm cli ingest data/sample --reset --no-verify
+  #   docker compose run --rm cli search "..." --as-of 2025-03-15
+  #   docker compose run --rm cli eval
+  cli:
+    build:
+      context: .
+      target: ${LAWRAG_TARGET:-models}
+    image: lawrag:${LAWRAG_TARGET:-models}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *lawrag_env
+    volumes: *lawrag_volumes
+    entrypoint: ["lawrag"]
+    command: ["--help"]
+    # The image healthcheck polls the API; a one-shot command is not serving
+    # one, and would sit there reported as unhealthy.
+    healthcheck:
+      disable: true
+    profiles: ["cli"]
+
+  # ------------------------------------------------------------- tests --
+  # docker compose run --rm tests
+  #
+  # Its own database on the same server, because the suite ingests with
+  # reset=True: pointed at the corpus database it would drop the corpus. The
+  # fixture creates it on first run.
+  tests:
+    build:
+      context: .
+      target: ${LAWRAG_TARGET:-models}
+    image: lawrag:${LAWRAG_TARGET:-models}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      <<: *lawrag_env
+      LAWRAG_TEST_DSN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-2006}@db:5432/${POSTGRES_DB:-lawrag}_test
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./src:/app/src
+      - ./tests:/app/tests
+    entrypoint: ["pytest"]
+    command: ["-q"]
+    healthcheck:
+      disable: true
+    profiles: ["tests"]
+
+  # --------------------------------------------------------------- llm --
+  # The generator, as a service rather than a binary someone remembered to
+  # start. Profile A (dense 9B) and Profile B (35B MoE) differ only by the two
+  # variables below — see .env.example.
+  #
+  #   docker compose --profile llm up -d llm
+  #
+  # This is the CPU image; the GPU overlay swaps in :server-cuda.
+  llm:
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+    container_name: lawrag-llm
+    volumes:
+      - ${MODEL_DIR:-./models}:/models:ro
+    ports:
+      - "127.0.0.1:${LLM_HOST_PORT:-8080}:8080"
+    command: >
+      --model /models/${LLM_MODEL_FILE:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}
+      --host 0.0.0.0 --port 8080
+      --n-gpu-layers ${LLM_GPU_LAYERS:-999}
+      --n-cpu-moe ${LLM_N_CPU_MOE:-28}
+      --ctx-size ${LLM_CTX_SIZE:-32768}
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --flash-attn on
+      --temp 0.0
+      --jinja
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    restart: unless-stopped
+    profiles: ["llm"]
+
+  # --------------------------------------------- model download (online) --
+  # Runs on the CONNECTED side only. Fetches BGE-M3 + the reranker into
+  # MODEL_DIR, which is what you then carry across the air gap.
+  #
+  #   docker compose --profile download run --rm download-models
+  download-models:
+    build:
+      context: .
+      target: models
+    image: lawrag:models
+    environment:
+      MODEL_DIR: /models
+      # The one place in the project that is allowed to reach the network.
+      HF_HUB_OFFLINE: "0"
+      TRANSFORMERS_OFFLINE: "0"
+    volumes:
+      - ${MODEL_DIR:-./models}:/models
+    entrypoint: ["python", "scripts/download_models.py"]
+    healthcheck:
+      disable: true
+    profiles: ["download"]
 
 volumes:
   lawrag-pgdata:

@@ -15,30 +15,93 @@ no query-path code makes an outbound network call.
 
 ## Quick start
 
-```bash
-docker compose up -d db          # Postgres 16 + pgvector
-pip install -e ".[dev]"
-lawrag ingest data/sample --reset --no-verify
-lawrag stats
-lawrag eval
-```
-
-Windows: `scripts\bootstrap.ps1` does the same. Linux/macOS: `scripts/bootstrap.sh`.
+Docker is the only prerequisite. There is nothing to install on the host — no
+Python, no virtualenv, no `pip install -e`.
 
 ```bash
-lawrag search "В какой срок нужно встать на регистрационный учет?"
-lawrag search "Какой штраф за просрочку?" --as-of 2025-03-15    # point-in-time
-lawrag search "Тіркеу есебіне қою мерзімі қандай?"              # Kazakh
-lawrag ask    "Продлевается ли срок для малого бизнеса?"
-lawrag serve                                                     # HTTP API
+scripts/bootstrap.sh          # Windows: scripts\bootstrap.ps1
 ```
+
+or the same thing by hand:
+
+```bash
+docker compose build app
+docker compose up -d --wait db                                   # Postgres 16 + pgvector
+docker compose run --rm cli ingest data/sample --reset --no-verify
+docker compose run --rm cli stats
+docker compose run --rm cli eval
+docker compose up -d app                                         # API + console on :8000
+```
+
+```bash
+docker compose run --rm cli search "В какой срок нужно встать на регистрационный учет?"
+docker compose run --rm cli search "Какой штраф за просрочку?" --as-of 2025-03-15   # point-in-time
+docker compose run --rm cli search "Тіркеу есебіне қою мерзімі қандай?"             # Kazakh
+docker compose run --rm cli ask    "Продлевается ли срок для малого бизнеса?"
+docker compose run --rm tests                                    # the test suite
+```
+
+`cli` is the same image the API runs, against the same config and database, so a
+question answered from the shell and the same question answered in the browser
+go through identical code.
+
+---
+
+## Containers
+
+| service | profile | what it is |
+| --- | --- | --- |
+| `db` | — | Postgres 16 + pgvector, published on `127.0.0.1:5433` |
+| `app` | — | the HTTP API and the browser console, on `127.0.0.1:8000` |
+| `cli` | `cli` | one-shot `lawrag` commands: ingest, search, ask, stats, eval |
+| `tests` | `tests` | pytest, against a live `db` |
+| `llm` | `llm` | llama-server with the local generator |
+| `download-models` | `download` | fetches the weights — connected side only |
+
+Two image targets, because the weights stack dwarfs everything else: `runtime`
+(~390 MB — CLI, API, ingest, retrieval, a llama.cpp client) and `models`
+(~10 GB, adding torch + FlagEmbedding for bge-m3 and the reranker).
+`LAWRAG_TARGET` in `.env` picks one; it defaults to `models`, because the
+shipped config asks for bge-m3.
+
+What stays outside the image is deliberate: the corpus, the weights and the
+config are mounted. An image with a snapshot of the law baked in would go stale
+with no symptom, which is the failure this project works hardest to prevent.
+
+**GPU.** The base compose file runs on the CPU so a machine without a card still
+works; a device reservation that cannot be satisfied is a hard startup failure,
+so it lives in an overlay instead of a flag:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+Set `COMPOSE_FILE` in `.env` to make that the default. Needs the NVIDIA
+Container Toolkit (Docker Desktop provides it on WSL2 with a current driver).
+
+**Air gap.** Move images, not wheels. On the connected side:
+
+```bash
+docker compose build app
+docker save lawrag:models pgvector/pgvector:pg16 ghcr.io/ggml-org/llama.cpp:server-cuda -o lawrag-images.tar
+```
+
+Carry that tarball and the `MODEL_DIR` tree across; `docker load -i
+lawrag-images.tar` on the target, then `docker compose up -d`. No pip index, no
+wheelhouse to assemble, and no host interpreter whose version has to match.
+
+**Configuration.** `config/default.yaml` is where a setting is reasoned about;
+anything that differs between deployments is an environment variable that
+overrides it, spelled `LAWRAG_<SECTION>_<FIELD>` — `LAWRAG_DB_DSN`,
+`LAWRAG_EMBEDDING_DEVICE`, `LAWRAG_LLM_BASE_URL`. `docker-compose.yml` sets
+exactly those, which is why the YAML names container paths and no drive letters.
 
 ---
 
 ## Console
 
-`lawrag serve` also serves a browser console at `http://127.0.0.1:8000/`, over
-the same endpoints the CLI uses:
+The `app` service serves a browser console at `http://127.0.0.1:8000/`, over the
+same endpoints the CLI uses:
 
 | view | what it is for |
 | --- | --- |
@@ -63,11 +126,13 @@ banner on every view, an unreachable database is reported as such instead of an
 empty page, and a superseded or repealed article is never shown with the same
 badge as one in force.
 
-The shipped config uses **placeholder models** — a deterministic hash embedder
-and an echo LLM — so a fresh clone is runnable and testable with no weights on
-disk. Retrieval is fully functional in that state; `ask` abstains with
-`no_model_loaded` rather than pretending. `GET /health` reports
-`production_ready: false` until both are switched over.
+There are also **placeholder models** — a deterministic hash embedder and an echo
+LLM — so the pipeline is runnable and testable on a machine with no weights on
+disk (`embedding.backend: hash`, `llm.backend: echo`). Retrieval is fully
+functional in that state; `ask` abstains with `no_model_loaded` rather than
+pretending, and `GET /health` reports `production_ready: false`. The console
+raises a banner on every view rather than letting placeholder output pass for an
+answer.
 
 ---
 
@@ -176,7 +241,7 @@ Rules the chunker follows:
   stripped from indexed text and kept as metadata — otherwise every article in
   a heavily amended code shares the same high-frequency boilerplate.
 
-`lawrag context` runs the optional contextual-retrieval batch job: a small local
+`docker compose run --rm cli context` runs the optional contextual-retrieval batch job: a small local
 model writes one sentence per chunk situating it in its act, cached by content
 hash. Largest retrieval gain per unit of effort; costs nothing at query time.
 
@@ -211,39 +276,48 @@ Two known weak points, stated rather than hidden:
 
 ---
 
-## Switching on the real models
+## Models
 
 Hardware assumed: 8 GB VRAM, 32 GB RAM, high-core CPU.
 
-```yaml
-# config/default.yaml
-embedding:
-  backend: bge-m3
-  model_path: /opt/models/bge-m3
-  device: cuda
-rerank:
-  backend: bge-reranker
-  model_path: /opt/models/bge-reranker-v2-m3
-  device: cpu            # keep the 8 GB card for the generator
-llm:
-  backend: llamacpp
-  base_url: http://127.0.0.1:8080/v1
+The backends in `config/default.yaml` are already the production ones — bge-m3,
+the bge reranker, and llama.cpp. What they need is the weights, in `MODEL_DIR`
+on the host, mounted at `/models` in every container:
+
+```bash
+scripts/download_models.sh        # connected side; Windows: scripts\download_models.ps1
 ```
+
+That lands `bge-m3/` and `bge-reranker-v2-m3/` under `MODEL_DIR`; put the
+`.gguf` generator file beside them. The download runs in the same `models` image
+that will later load the weights, so what is fetched is what is loaded.
 
 ```bash
 scripts/serve_llm.sh A    # Qwen3.5-9B Q4_K_M, full GPU offload, ~50 tok/s
 scripts/serve_llm.sh B    # Qwen3.6-35B-A3B, MoE experts in RAM, ~30 tok/s
+scripts/serve_llm.sh B --cpu   # no card
 ```
+
+Both scripts are wrappers around `docker compose --profile llm up -d llm`: the
+profile differs only in `LLM_MODEL_FILE` and `LLM_N_CPU_MOE`, so switching
+models is a variable, not a rebuild. Nothing in the generator path is installed
+on the host — there is no `llama-server.exe` to put on `PATH`.
 
 Profile A is the safe default. Profile B is the quality upgrade and needs ~20 GB
 of free RAM for weights — tight on 32 GB once Postgres is also running; 64 GB is
 the highest-ROI upgrade for this box. For MoE offload, **memory bandwidth beats
 core count** — verify your DDR5 is running at its rated speed before blaming the
-software. The 50-series is Blackwell (sm_120): use a current llama.cpp build or
-you will silently fall back to slow paths.
+software. The 50-series is Blackwell (sm_120): pin a current
+`ghcr.io/ggml-org/llama.cpp:server-cuda` tag (`LLAMA_IMAGE`) or you will
+silently fall back to slow paths.
+
+A machine with no weights at all can still run everything except `ask`: set
+`embedding.backend: hash` and `llm.backend: echo`, build with
+`LAWRAG_TARGET=runtime`, and retrieval stays fully functional. `GET /health`
+reports `production_ready: false` in that state.
 
 After switching, re-tune `retrieval.min_dense_score` / `min_lexical_score` and
-re-run `lawrag eval`.
+re-run `docker compose run --rm cli eval`.
 
 ### Kazakh answers
 
@@ -258,7 +332,7 @@ prompt in `generate/prompts.py` states this as a hard rule.
 ## Evaluation
 
 ```bash
-lawrag eval src/lawrag/evalkit/questions.sample.yaml
+docker compose run --rm cli eval src/lawrag/evalkit/questions.sample.yaml
 ```
 
 Measures whether the correct **set** of articles reached the model, not whether
@@ -281,9 +355,13 @@ recall.
 
 ## Operations
 
-- `lawrag stats` — row counts plus **unresolved references**, i.e. which acts
-  are cited by your corpus but missing from it. Unresolved refs are kept on
-  purpose; hiding them would make the graph look complete when it is not.
+- `docker compose run --rm cli stats` — row counts plus **unresolved
+  references**, i.e. which acts are cited by your corpus but missing from it.
+  Unresolved refs are kept on purpose; hiding them would make the graph look
+  complete when it is not.
+- The corpus lives in the `lawrag-pgdata` volume, not in an image. `docker
+  compose down` keeps it; `down -v` destroys it and the corpus has to be
+  re-ingested from the snapshots.
 - Every answer is written to `query_log`: question, as-of date, snapshot,
   retrieved chunk ids, citations, verification verdict, latency.
 - On each new snapshot, diff which previously-cited articles changed. That both
@@ -296,9 +374,17 @@ recall.
 ## Layout
 
 ```
+Dockerfile                  two targets: runtime (no weights stack) and models
+docker-compose.yml          db, api, cli, tests, llm, model download
+docker-compose.gpu.yml      GPU overlay — device reservations, the CUDA llama.cpp
+.env.example                this machine: weights dir, ports, image target
 sql/001_schema.sql          bitemporal schema + overlap constraints, versioned
                             citation graph, glossary, audit log
 config/default.yaml         every knob, with the reasoning next to it
+scripts/
+  bootstrap.*               clean clone to a working system, in containers
+  download_models.*         connected-side weight fetch, in a container
+  serve_llm.*               generator profiles A/B as compose variables
 src/lawrag/
   models.py                 canonical legal document model, norm hierarchy
   ingest/
@@ -340,5 +426,3 @@ escalates when the question calls for judgement. Every answer carries a
 disclaimer. The Law «О правовых актах» hierarchy is encoded so that conflicts
 between acts of different legal force can be surfaced — but resolving them is a
 lawyer's job, not the system's.
-#   l a w r a g  
- 

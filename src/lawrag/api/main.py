@@ -73,8 +73,9 @@ def _startup_failure(exc: Exception) -> str:
     base = f"answering stack unavailable: {type(exc).__name__}: {exc}"
     if isinstance(exc, ModuleNotFoundError) and exc.name:
         return (f"{base}. Module {exc.name!r} is not installed in "
-                f"{sys.executable}. Start the server from the project "
-                f"virtualenv, or set embedding.backend / llm.backend back to "
+                f"{sys.executable}. The weights stack lives in the `models` "
+                f"image only: rebuild with LAWRAG_TARGET=models (docker compose "
+                f"build app), or set embedding.backend / llm.backend back to "
                 f"the placeholders in config/default.yaml.")
     return base
 

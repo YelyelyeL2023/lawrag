@@ -340,3 +340,5 @@ escalates when the question calls for judgement. Every answer carries a
 disclaimer. The Law «О правовых актах» hierarchy is encoded so that conflicts
 between acts of different legal force can be surfaced — but resolving them is a
 lawyer's job, not the system's.
+#   l a w r a g  
+ 

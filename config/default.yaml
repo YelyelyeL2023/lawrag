@@ -1,0 +1,60 @@
+# lawrag configuration.
+#
+# The shipped defaults run the entire pipeline with zero model downloads, using
+# a deterministic hash embedder and an echo LLM, so a fresh clone works
+# end-to-end on the sample corpus. Switch the backends below once the real
+# weights are on the machine.
+
+db:
+  dsn: postgresql://postgres:2006@localhost:5433/lawrag
+
+embedding:
+  backend: bge-m3        # production (was: hash placeholder)
+  model_path: D:/models/bge-m3
+  dim: 1024
+  device: cuda
+  batch_size: 8
+
+rerank:
+  backend: bge-reranker  # production (was: none)
+  model_path: D:/models/bge-reranker-v2-m3
+  device: cpu            # keep the 8 GB card for the generator
+  top_k_in: 40
+  top_k_out: 8
+
+llm:
+  backend: llamacpp      # production (was: echo)
+  base_url: http://127.0.0.1:8080/v1
+  model: qwen3.6-35b-a3b-q4_k_m   # Profile B (MoE); label only, llama-server serves the loaded gguf
+  context_model: qwen3.5-4b-q4_k_m
+  temperature: 0.0
+
+chunking:
+  max_article_tokens: 1000
+  min_split_tokens: 120
+  hard_max_tokens: 3000
+  generate_context_sentences: false   # needs a real LLM backend
+
+retrieval:
+  dense_k: 50
+  sparse_k: 50
+  final_k: 8
+  hydrate_refs: true
+  hydrate_definitions: true
+  cross_language: true
+  # Absolute relevance floor — what makes the system abstain on an
+  # out-of-corpus question instead of answering from the least-bad match.
+  # These are on the embedding model's own scale. RE-TUNE THEM when you switch
+  # embedding.backend to bge-m3: run `lawrag search` on a handful of questions
+  # you know are answerable and a handful you know are not, and put the
+  # threshold in the gap. Leaving the placeholder values in place with a real
+  # model is a silent failure — either everything passes or nothing does.
+  # min_dense_score is a cosine on the embedding model's scale — re-tune it when
+  # you switch backend. min_lexical_score is a ts_rank_cd value (corpus- and
+  # config-dependent, unrelated to the embedding model). min_trigram_score is a
+  # word_similarity on 0..1, used only by the Kazakh fuzzy fallback.
+  min_dense_score: 0.30
+  min_lexical_score: 0.60
+  min_trigram_score: 0.45
+
+log_level: INFO

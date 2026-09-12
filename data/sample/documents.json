@@ -1,0 +1,412 @@
+[
+  {
+    "file": "gk.ru.html",
+    "code": "gk",
+    "kind": "code",
+    "official_id": "K940001000_",
+    "lang": "ru",
+    "title": "Гражданский кодекс Республики Казахстан (Общая часть)",
+    "url": "https://adilet.zan.kz/rus/docs/K940001000_",
+    "fetched_at": "2026-09-08T17:26:04+0500"
+  },
+  {
+    "file": "gk.kk.html",
+    "code": "gk",
+    "kind": "code",
+    "official_id": "K940001000_",
+    "lang": "kk",
+    "title": "Қазақстан Республикасының Азаматтық кодексі (Жалпы бөлім)",
+    "url": "https://adilet.zan.kz/kaz/docs/K940001000_",
+    "fetched_at": "2026-09-08T17:26:08+0500"
+  },
+  {
+    "file": "gpk.ru.html",
+    "code": "gpk",
+    "kind": "code",
+    "official_id": "K1500000377",
+    "lang": "ru",
+    "title": "Гражданский процессуальный кодекс",
+    "url": "https://adilet.zan.kz/rus/docs/K1500000377",
+    "fetched_at": "2026-09-08T17:26:13+0500"
+  },
+  {
+    "file": "uk.ru.html",
+    "code": "uk",
+    "kind": "code",
+    "official_id": "K1400000226",
+    "lang": "ru",
+    "title": "Уголовный кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K1400000226",
+    "fetched_at": "2026-09-08T17:26:17+0500"
+  },
+  {
+    "file": "uk.kk.html",
+    "code": "uk",
+    "kind": "code",
+    "official_id": "K1400000226",
+    "lang": "kk",
+    "title": "Қазақстан Республикасының Қылмыстық кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K1400000226",
+    "fetched_at": "2026-09-08T17:26:22+0500"
+  },
+  {
+    "file": "upk.ru.html",
+    "code": "upk",
+    "kind": "code",
+    "official_id": "K1400000231",
+    "lang": "ru",
+    "title": "Уголовно-процессуальный кодекс",
+    "url": "https://adilet.zan.kz/rus/docs/K1400000231",
+    "fetched_at": "2026-09-08T17:26:26+0500"
+  },
+  {
+    "file": "upk.kk.html",
+    "code": "upk",
+    "kind": "code",
+    "official_id": "K1400000231",
+    "lang": "kk",
+    "title": "Қылмыстық-процестік кодекс",
+    "url": "https://adilet.zan.kz/kaz/docs/K1400000231",
+    "fetched_at": "2026-09-08T17:26:30+0500"
+  },
+  {
+    "file": "uik.ru.html",
+    "code": "uik",
+    "kind": "code",
+    "official_id": "K1400000234",
+    "lang": "ru",
+    "title": "Уголовно-исполнительный кодекс",
+    "url": "https://adilet.zan.kz/rus/docs/K1400000234",
+    "fetched_at": "2026-09-08T17:26:33+0500"
+  },
+  {
+    "file": "uik.kk.html",
+    "code": "uik",
+    "kind": "code",
+    "official_id": "K1400000234",
+    "lang": "kk",
+    "title": "Қылмыстық-атқару кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K1400000234",
+    "fetched_at": "2026-09-08T17:26:37+0500"
+  },
+  {
+    "file": "koap.ru.html",
+    "code": "koap",
+    "kind": "code",
+    "official_id": "K1400000235",
+    "lang": "ru",
+    "title": "Кодекс Республики Казахстан об административных правонарушениях",
+    "url": "https://adilet.zan.kz/rus/docs/K1400000235",
+    "fetched_at": "2026-09-08T17:26:41+0500"
+  },
+  {
+    "file": "koap.kk.html",
+    "code": "koap",
+    "kind": "code",
+    "official_id": "K1400000235",
+    "lang": "kk",
+    "title": "Әкімшілік құқық бұзушылық туралы кодекс",
+    "url": "https://adilet.zan.kz/kaz/docs/K1400000235",
+    "fetched_at": "2026-09-08T17:26:45+0500"
+  },
+  {
+    "file": "appk.ru.html",
+    "code": "appk",
+    "kind": "code",
+    "official_id": "K2000000350",
+    "lang": "ru",
+    "title": "Административный процедурно-процессуальный кодекс",
+    "url": "https://adilet.zan.kz/rus/docs/K2000000350",
+    "fetched_at": "2026-09-08T17:26:49+0500"
+  },
+  {
+    "file": "appk.kk.html",
+    "code": "appk",
+    "kind": "code",
+    "official_id": "K2000000350",
+    "lang": "kk",
+    "title": "Әкімшілік рәсімдік-процестік кодекс",
+    "url": "https://adilet.zan.kz/kaz/docs/K2000000350",
+    "fetched_at": "2026-09-08T17:26:52+0500"
+  },
+  {
+    "file": "nk.ru.html",
+    "code": "nk",
+    "kind": "code",
+    "official_id": "K2500000214",
+    "lang": "ru",
+    "title": "Налоговый кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K2500000214",
+    "fetched_at": "2026-09-08T17:26:58+0500"
+  },
+  {
+    "file": "nk.kk.html",
+    "code": "nk",
+    "kind": "code",
+    "official_id": "K2500000214",
+    "lang": "kk",
+    "title": "Салық кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K2500000214",
+    "fetched_at": "2026-09-08T17:27:03+0500"
+  },
+  {
+    "file": "nk2017.ru.html",
+    "code": "nk2017",
+    "kind": "code",
+    "official_id": "K1700000120",
+    "lang": "ru",
+    "title": "Налоговый кодекс Республики Казахстан (кодекс 2017 года)",
+    "url": "https://adilet.zan.kz/rus/docs/K1700000120",
+    "fetched_at": "2026-09-08T17:27:08+0500"
+  },
+  {
+    "file": "nk2017.kk.html",
+    "code": "nk2017",
+    "kind": "code",
+    "official_id": "K1700000120",
+    "lang": "kk",
+    "title": "Салық кодексі (2017 жылғы кодекс)",
+    "url": "https://adilet.zan.kz/kaz/docs/K1700000120",
+    "fetched_at": "2026-09-08T17:27:12+0500"
+  },
+  {
+    "file": "tk.ru.html",
+    "code": "tk",
+    "kind": "code",
+    "official_id": "K1500000414",
+    "lang": "ru",
+    "title": "Трудовой кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K1500000414",
+    "fetched_at": "2026-09-08T17:27:16+0500"
+  },
+  {
+    "file": "tk.kk.html",
+    "code": "tk",
+    "kind": "code",
+    "official_id": "K1500000414",
+    "lang": "kk",
+    "title": "Еңбек кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K1500000414",
+    "fetched_at": "2026-09-08T17:27:20+0500"
+  },
+  {
+    "file": "pk.ru.html",
+    "code": "pk",
+    "kind": "code",
+    "official_id": "K1500000375",
+    "lang": "ru",
+    "title": "Предпринимательский кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K1500000375",
+    "fetched_at": "2026-09-08T17:27:25+0500"
+  },
+  {
+    "file": "pk.kk.html",
+    "code": "pk",
+    "kind": "code",
+    "official_id": "K1500000375",
+    "lang": "kk",
+    "title": "Кәсіпкерлік кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K1500000375",
+    "fetched_at": "2026-09-08T17:27:29+0500"
+  },
+  {
+    "file": "bk.ru.html",
+    "code": "bk",
+    "kind": "code",
+    "official_id": "K080000095_",
+    "lang": "ru",
+    "title": "Бюджетный кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K080000095_",
+    "fetched_at": "2026-09-08T17:27:33+0500"
+  },
+  {
+    "file": "bk.kk.html",
+    "code": "bk",
+    "kind": "code",
+    "official_id": "K080000095_",
+    "lang": "kk",
+    "title": "Бюджет кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K080000095_",
+    "fetched_at": "2026-09-08T17:27:38+0500"
+  },
+  {
+    "file": "zk.ru.html",
+    "code": "zk",
+    "kind": "code",
+    "official_id": "K030000442_",
+    "lang": "ru",
+    "title": "Земельный кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K030000442_",
+    "fetched_at": "2026-09-08T17:27:42+0500"
+  },
+  {
+    "file": "zk.kk.html",
+    "code": "zk",
+    "kind": "code",
+    "official_id": "K030000442_",
+    "lang": "kk",
+    "title": "Жер кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K030000442_",
+    "fetched_at": "2026-09-08T17:27:46+0500"
+  },
+  {
+    "file": "ek.ru.html",
+    "code": "ek",
+    "kind": "code",
+    "official_id": "K2100000400",
+    "lang": "ru",
+    "title": "Экологический кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K2100000400",
+    "fetched_at": "2026-09-08T17:27:50+0500"
+  },
+  {
+    "file": "ek.kk.html",
+    "code": "ek",
+    "kind": "code",
+    "official_id": "K2100000400",
+    "lang": "kk",
+    "title": "Экология кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K2100000400",
+    "fetched_at": "2026-09-08T17:27:54+0500"
+  },
+  {
+    "file": "vk.ru.html",
+    "code": "vk",
+    "kind": "code",
+    "official_id": "K030000481_",
+    "lang": "ru",
+    "title": "Водный кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K030000481_",
+    "fetched_at": "2026-09-08T17:27:58+0500"
+  },
+  {
+    "file": "vk.kk.html",
+    "code": "vk",
+    "kind": "code",
+    "official_id": "K030000481_",
+    "lang": "kk",
+    "title": "Су кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K030000481_",
+    "fetched_at": "2026-09-08T17:28:01+0500"
+  },
+  {
+    "file": "lk.ru.html",
+    "code": "lk",
+    "kind": "code",
+    "official_id": "K030000477_",
+    "lang": "ru",
+    "title": "Лесной кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K030000477_",
+    "fetched_at": "2026-09-08T17:28:05+0500"
+  },
+  {
+    "file": "lk.kk.html",
+    "code": "lk",
+    "kind": "code",
+    "official_id": "K030000477_",
+    "lang": "kk",
+    "title": "Орман кодексі",
+    "url": "https://adilet.zan.kz/kaz/docs/K030000477_",
+    "fetched_at": "2026-09-08T17:28:09+0500"
+  },
+  {
+    "file": "tamk.ru.html",
+    "code": "tamk",
+    "kind": "code",
+    "official_id": "K1700000123",
+    "lang": "ru",
+    "title": "Кодекс Республики Казахстан о таможенном регулировании",
+    "url": "https://adilet.zan.kz/rus/docs/K1700000123",
+    "fetched_at": "2026-09-08T17:28:14+0500"
+  },
+  {
+    "file": "tamk.kk.html",
+    "code": "tamk",
+    "kind": "code",
+    "official_id": "K1700000123",
+    "lang": "kk",
+    "title": "Кеден реттеу туралы кодекс",
+    "url": "https://adilet.zan.kz/kaz/docs/K1700000123",
+    "fetched_at": "2026-09-08T17:28:19+0500"
+  },
+  {
+    "file": "kobs.ru.html",
+    "code": "kobs",
+    "kind": "code",
+    "official_id": "K1100000518",
+    "lang": "ru",
+    "title": "Кодекс о браке (супружестве) и семье",
+    "url": "https://adilet.zan.kz/rus/docs/K1100000518",
+    "fetched_at": "2026-09-08T17:28:24+0500"
+  },
+  {
+    "file": "kobs.kk.html",
+    "code": "kobs",
+    "kind": "code",
+    "official_id": "K1100000518",
+    "lang": "kk",
+    "title": "Неке (ерлі-зайыптылық) және отбасы туралы кодекс",
+    "url": "https://adilet.zan.kz/kaz/docs/K1100000518",
+    "fetched_at": "2026-09-08T17:28:28+0500"
+  },
+  {
+    "file": "kozn.ru.html",
+    "code": "kozn",
+    "kind": "code",
+    "official_id": "K2000000360",
+    "lang": "ru",
+    "title": "Кодекс о здоровье народа и системе здравоохранения",
+    "url": "https://adilet.zan.kz/rus/docs/K2000000360",
+    "fetched_at": "2026-09-08T17:28:33+0500"
+  },
+  {
+    "file": "kozn.kk.html",
+    "code": "kozn",
+    "kind": "code",
+    "official_id": "K2000000360",
+    "lang": "kk",
+    "title": "Халық денсаулығы және денсаулық сақтау жүйесі туралы кодекс",
+    "url": "https://adilet.zan.kz/kaz/docs/K2000000360",
+    "fetched_at": "2026-09-08T17:28:37+0500"
+  },
+  {
+    "file": "sk.ru.html",
+    "code": "sk",
+    "kind": "code",
+    "official_id": "K2300000224",
+    "lang": "ru",
+    "title": "Социальный кодекс Республики Казахстан",
+    "url": "https://adilet.zan.kz/rus/docs/K2300000224",
+    "fetched_at": "2026-09-08T17:28:42+0500"
+  },
+  {
+    "file": "sk.kk.html",
+    "code": "sk",
+    "kind": "code",
+    "official_id": "K2300000224",
+    "lang": "kk",
+    "title": "Әлеуметтік кодекс",
+    "url": "https://adilet.zan.kz/kaz/docs/K2300000224",
+    "fetched_at": "2026-09-08T17:28:46+0500"
+  },
+  {
+    "file": "nedra.ru.html",
+    "code": "nedra",
+    "kind": "code",
+    "official_id": "K1700000125",
+    "lang": "ru",
+    "title": "Кодекс о недрах и недропользовании",
+    "url": "https://adilet.zan.kz/rus/docs/K1700000125",
+    "fetched_at": "2026-09-08T17:28:50+0500"
+  },
+  {
+    "file": "nedra.kk.html",
+    "code": "nedra",
+    "kind": "code",
+    "official_id": "K1700000125",
+    "lang": "kk",
+    "title": "Жер қойнауы және жер қойнауын пайдалану туралы кодекс",
+    "url": "https://adilet.zan.kz/kaz/docs/K1700000125",
+    "fetched_at": "2026-09-08T17:28:55+0500"
+  }
+]

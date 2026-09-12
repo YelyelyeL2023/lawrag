@@ -1,0 +1,35 @@
+# Postgres with pgvector. On the air-gapped machine, load this image from a
+# saved tarball (docker save / docker load) rather than pulling.
+#
+# Published on 5433, not 5432, because this workstation also runs a native
+# Windows PostgreSQL on 5432. Inside the container Postgres still listens on
+# 5432 — only the host-side port is remapped.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: lawrag-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 2006
+      POSTGRES_DB: lawrag
+    ports:
+      - "5433:5432"
+    volumes:
+      - lawrag-pgdata:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lawrag"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Tuned for a 32 GB workstation that is also running a local LLM: Postgres
+    # must not be the process that starves the model of RAM.
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c work_mem=64MB
+      -c maintenance_work_mem=512MB
+      -c effective_cache_size=4GB
+
+volumes:
+  lawrag-pgdata:

@@ -1,0 +1,69 @@
+# Golden question set (against the SYNTHETIC sample corpus).
+#
+# What is measured is whether the correct *set* of articles reached the model,
+# not whether the top-1 vector hit was right. Questions that deliberately need
+# more than one article are the point: a penalty whose amount depends on a
+# definition in another code, a rule with an exception two points away. If
+# hydration is working, recall@packet sits well above recall@chunk, and that gap
+# is the chunking-and-hydration quality signal.
+#
+# Replace this file with real compliance questions, verified by a lawyer, before
+# using any of these numbers to decide anything.
+
+- id: q1
+  question: Какой штраф грозит малому предприятию за повторную просрочку постановки на регистрационный учет?
+  lang: ru
+  expect:
+    - koap/st278      # the penalty
+    - pk/st24         # what "субъект малого предпринимательства" means
+  note: cross-code; the fine depends on a category defined in another act
+
+- id: q2
+  question: В какой срок нужно подать заявление о постановке на регистрационный учет?
+  lang: ru
+  expect:
+    - nk/st76
+
+- id: q3
+  question: Продлевается ли срок постановки на учет для малого бизнеса?
+  lang: ru
+  expect:
+    - nk/st76
+    - pk/st24
+
+- id: q4
+  question: Что было предусмотрено за просрочку постановки на учет в марте 2025 года?
+  lang: ru
+  as_of: 2025-03-15
+  expect:
+    - koap/st278
+  expect_superseded: true
+  note: point-in-time; must return the 2024 redaction, not the 2026 one
+
+- id: q5
+  question: Есть ли ответственность, если срок пропущен во время чрезвычайного положения?
+  lang: ru
+  expect:
+    - koap/st278
+    - nk/st76
+  note: the exception in point 3 refers out to another code
+
+- id: q6
+  question: Шағын кәсіпкерлік субъектісі үшін тіркеу есебіне қою мерзімі қандай?
+  lang: kk
+  expect:
+    - nk/st76
+    - pk/st24
+
+- id: q7
+  question: Тіркеу есебіне қою мерзімін бұзғаны үшін қандай айыппұл салынады?
+  lang: kk
+  expect:
+    - koap/st278
+
+- id: q8
+  question: Какая ставка налога на добычу редкоземельных металлов на шельфе?
+  lang: ru
+  expect: []
+  expect_abstain: true
+  note: nothing in the corpus answers this; the system must say so rather than improvise

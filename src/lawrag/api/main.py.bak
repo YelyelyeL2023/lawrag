@@ -1,0 +1,144 @@
+"""HTTP API.
+
+Deliberately small. The endpoints mirror the CLI so that whatever the UI does,
+an operator can reproduce it from a shell — which matters a great deal when the
+machine is air-gapped and you cannot attach a debugger from your laptop.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from typing import Literal, Optional
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from ..config import load_config
+from ..generate.answer import AnswerService
+from ..index.db import Database
+from ..logging_setup import get_logger, setup_logging
+from ..models import Lang
+
+log = get_logger(__name__)
+
+cfg = load_config()
+setup_logging(cfg.log_level)
+
+app = FastAPI(
+    title="lawrag",
+    version="0.1.0",
+    description=("Retrieval over the Constitution and Codes of the Republic of "
+                 "Kazakhstan. Returns statutory text with pinpoint citations. "
+                 "Not legal advice."),
+)
+
+_service: AnswerService | None = None
+
+
+def service() -> AnswerService:
+    global _service
+    if _service is None:
+        _service = AnswerService(cfg)
+    return _service
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=2000)
+    as_of: Optional[date] = Field(
+        None, description="Answer as the law stood on this date. Defaults to today."
+    )
+    lang: Optional[Literal["ru", "kk"]] = None
+
+
+class SearchRequest(AskRequest):
+    include_packet: bool = False
+
+
+@app.get("/health")
+def health() -> dict:
+    db = Database(cfg)
+    try:
+        counts = db.stats()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"database unavailable: {exc}") from exc
+    return {
+        "status": "ok",
+        "corpus": counts,
+        "embedding_backend": cfg.embedding.backend,
+        "llm_backend": cfg.llm.backend,
+        # Surfaced on purpose: an operator hitting /health must be able to see
+        # that the system is running on placeholder models.
+        "production_ready": cfg.embedding.backend != "hash" and cfg.llm.backend != "echo",
+    }
+
+
+@app.post("/ask")
+def ask(req: AskRequest) -> dict:
+    answer = service().ask(req.question, as_of=req.as_of,
+                           lang=Lang(req.lang) if req.lang else None)
+    return answer.to_dict()
+
+
+@app.post("/search")
+def search(req: SearchRequest) -> dict:
+    result = service().engine.retrieve(
+        req.question, as_of=req.as_of, lang=Lang(req.lang) if req.lang else None
+    )
+    payload = {
+        "as_of": result.analysis.as_of.isoformat(),
+        "lang": result.analysis.lang.value,
+        "act_hints": result.analysis.act_hints,
+        "hits": [
+            {
+                "chunk_id": h.chunk_id,
+                "node_id": h.node_id,
+                "article_node_id": h.article_node_id,
+                "act_code": h.act_code,
+                "heading": h.heading,
+                "lang": h.lang,
+                "valid_from": h.valid_from.isoformat(),
+                "valid_to": h.valid_to.isoformat(),
+                "is_current": h.is_current,
+                "dense_score": round(h.dense_score, 4),
+                "lexical_score": round(h.sparse_score, 4),
+                "fused_score": round(h.fused_score, 6),
+                "rerank_score": h.rerank_score,
+                "provenance": h.provenance,
+                "text": h.display_text,
+            }
+            for h in result.hits
+        ],
+        "timings_ms": result.timings_ms,
+    }
+    if req.include_packet:
+        payload["packet"] = result.packet.text
+    return payload
+
+
+@app.get("/article/{act_code}/{number}")
+def article(act_code: str, number: str, as_of: Optional[date] = None) -> dict:
+    """Direct point-in-time lookup, no search involved."""
+    when = as_of or date.today()
+    db = Database(cfg)
+    with db.connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT lang, heading, body, valid_from, valid_to
+              FROM node_text
+             WHERE node_id = %s AND valid_from <= %s AND valid_to >= %s
+            """,
+            (f"{act_code}/st{number}", when, when),
+        )
+        rows = cur.fetchall()
+    if not rows:
+        raise HTTPException(404, f"{act_code}/st{number} not in force on {when}")
+    return {
+        "node_id": f"{act_code}/st{number}",
+        "as_of": when.isoformat(),
+        "texts": [
+            {"lang": r["lang"], "heading": r["heading"], "body": r["body"],
+             "valid_from": r["valid_from"].isoformat(),
+             "valid_to": r["valid_to"].isoformat()}
+            for r in rows
+        ],
+    }

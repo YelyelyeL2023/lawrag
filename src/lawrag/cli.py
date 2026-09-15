@@ -91,12 +91,10 @@ def fetch(out: Path = typer.Argument(..., help="Directory to write the snapshot 
 
     TLS note: httpx verifies against certifi, so a "certificate verify failed /
     unable to get local issuer" error usually means the signing root is trusted
-    by the machine but missing from certifi. Inside a container the host's trust
-    store is not visible either, so the fix is to hand the root in explicitly:
-    mount the PEM and pass --ca-bundle (or set LAWRAG_CA_BUNDLE), e.g.
+    by the machine but missing from certifi. The fix is to hand the root in
+    explicitly with --ca-bundle (or LAWRAG_CA_BUNDLE), e.g.
 
-        docker compose run --rm -v /path/root.pem:/certs/root.pem:ro
-            cli fetch --ca-bundle /certs/root.pem
+        lawrag fetch data/snapshots/2026-09 --ca-bundle /path/root.pem
     """
     from .ingest.fetch_adilet import build_plan, fetch as do_fetch
 

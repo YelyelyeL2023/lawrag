@@ -1,10 +1,10 @@
-# Windows equivalent of scripts/bootstrap.sh.
+# Windows equivalent of docker/scripts/bootstrap.sh.
 #
 # Docker Desktop is the only prerequisite — nothing is installed into a host
 # Python, and there is no virtualenv to activate.
 #
-#   scripts\bootstrap.ps1          CPU
-#   scripts\bootstrap.ps1 -Gpu     add the GPU overlay (embedder on the card)
+#   docker\scripts\bootstrap.ps1          CPU
+#   docker\scripts\bootstrap.ps1 -Gpu     add the GPU overlay (embedder on the card)
 param([switch]$Gpu)
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)

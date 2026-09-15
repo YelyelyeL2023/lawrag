@@ -7,6 +7,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "data" / "sample"
+TEST_DSN_ENV = "LAWRAG_TEST_DSN"
 
 
 def _db_available(dsn: str) -> bool:
@@ -62,8 +63,14 @@ def config():
 
 @pytest.fixture(scope="session")
 def live_db(config):
-    """Ingest the sample corpus once into a real Postgres, or skip."""
-    dsn = os.environ.get("LAWRAG_TEST_DSN", config.db.dsn)
+    """Ingest the sample corpus once into a real Postgres, or skip.
+
+    Only LAWRAG_TEST_DSN is honoured, never db.dsn: the suite drops and
+    recreates the schema, and the configured DSN is a shared corpus database.
+    """
+    dsn = os.environ.get(TEST_DSN_ENV)
+    if not dsn:
+        pytest.skip(f"{TEST_DSN_ENV} not set; database-backed tests skipped")
     if not _db_available(dsn):
         _create_database(dsn)
     if not _db_available(dsn):

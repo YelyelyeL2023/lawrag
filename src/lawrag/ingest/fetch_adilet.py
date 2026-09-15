@@ -151,8 +151,7 @@ def fetch(plans: list[FetchPlan], out_dir: Path, delay_s: float = DEFAULT_DELAY_
                         "against the trust store in use. The signing root is almost "
                         "certainly trusted by your OS but missing from certifi (a "
                         "corporate/antivirus TLS proxy, or the Kazakhstan national "
-                        "root). A container does not inherit the host's trust store, "
-                        "so hand the root in: mount the PEM and pass --ca-bundle PATH "
+                        "root). Hand the root in: pass --ca-bundle PATH "
                         "(or LAWRAG_CA_BUNDLE); failing that, pass --insecure to skip "
                         "verification (last resort, trusted network only)."
                     )

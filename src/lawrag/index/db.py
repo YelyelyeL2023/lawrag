@@ -13,13 +13,8 @@ from ..logging_setup import get_logger
 log = get_logger(__name__)
 
 def _find_schema() -> Path:
-    """Locate the schema file for both a source checkout and an installed wheel."""
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[3] / "sql" / "001_schema.sql",   # src layout checkout
-        here.parents[1] / "sql" / "001_schema.sql",   # packaged alongside lawrag/
-        Path.cwd() / "sql" / "001_schema.sql",
-    ]
+    """Locate the schema file packaged alongside lawrag/ (checkout or wheel)."""
+    candidates = [Path(__file__).resolve().parents[1] / "sql" / "001_schema.sql"]
     for candidate in candidates:
         if candidate.exists():
             return candidate

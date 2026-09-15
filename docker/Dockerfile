@@ -54,9 +54,6 @@ RUN useradd --create-home --uid 10001 lawrag \
 USER lawrag
 
 ENV LAWRAG_CONFIG=/app/config/default.yaml
-# Read back by the console's /api/stats, so an operator looking at a missing
-# module can tell whether the process answering them is the one compose manages.
-ENV LAWRAG_IN_CONTAINER=1
 
 # No curl in the image: one fewer package, and the check runs on the same
 # interpreter the server does.
@@ -85,8 +82,6 @@ RUN pip install -e ".[models]" && chown -R lawrag:lawrag /app
 USER lawrag
 
 # HF_HOME lands on the models volume rather than in the container's writable
-# layer, so nothing re-downloads after a `docker compose down`. On the
-# air-gapped side nothing downloads at all: model_path points at a local dir.
-ENV HF_HOME=/models/.hf \
-    HF_HUB_OFFLINE=1 \
-    TRANSFORMERS_OFFLINE=1
+# layer, so nothing re-downloads after a `docker compose down`. Offline mode is
+# enforced by the lawrag package itself, not here.
+ENV HF_HOME=/models/.hf

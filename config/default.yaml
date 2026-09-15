@@ -6,42 +6,39 @@
 #
 #   LAWRAG_<SECTION>_<FIELD>     e.g. LAWRAG_EMBEDDING_DEVICE=cuda
 #
-# docker-compose.yml sets exactly those wiring variables, which is why the
-# paths below are the ones a container sees. Nothing here assumes a host
-# interpreter, a virtualenv or a Windows drive letter.
+# The values below are local-development defaults; runtime-specific hostnames,
+# paths and credentials never belong in this file.
 #
 # The shipped backends are the production ones. A machine with no weights on
 # disk can run the whole pipeline on placeholders instead — embedding.backend:
 # hash and llm.backend: echo — and retrieval stays fully functional.
 
 db:
-  # `db` is the compose service name; from outside the compose network use
-  # localhost and the published port (5433 by default).
-  dsn: postgresql://postgres:2006@db:5432/lawrag
+  # Credentials come from LAWRAG_DB_DSN (or libpq's PGUSER / PGPASSWORD /
+  # ~/.pgpass), never from here.
+  dsn: postgresql://localhost:5432/lawrag
 
 embedding:
   backend: bge-m3        # production (was: hash placeholder)
-  # MODEL_DIR on the host is mounted at /models in every container.
-  model_path: /models/bge-m3
+  # Relative to the working directory; deployments set LAWRAG_EMBEDDING_MODEL_PATH.
+  model_path: models/bge-m3
   dim: 1024
-  # Overridden by LAWRAG_EMBEDDING_DEVICE: the base compose file says cpu, the
-  # GPU overlay says cuda. A config file cannot know whether the machine it is
-  # mounted into has a card.
-  device: cuda
+  # A config file cannot know whether the machine it runs on has a card:
+  # deployments set LAWRAG_EMBEDDING_DEVICE.
+  device: cpu
   batch_size: 8
 
 rerank:
   backend: bge-reranker  # production (was: none)
-  model_path: /models/bge-reranker-v2-m3
+  model_path: models/bge-reranker-v2-m3
   device: cpu            # keep the 8 GB card for the generator
   top_k_in: 40
   top_k_out: 8
 
 llm:
   backend: llamacpp      # production (was: echo)
-  # `llm` is the compose service (profile "llm"); llama-server listens on 8080
-  # inside the network and is published on 127.0.0.1:8080 for host tools.
-  base_url: http://llm:8080/v1
+  # llama-server's OpenAI-compatible endpoint; deployments set LAWRAG_LLM_BASE_URL.
+  base_url: http://127.0.0.1:8080/v1
   model: qwen3.6-35b-a3b-q4_k_m   # Profile B (MoE); label only, llama-server serves the loaded gguf
   context_model: qwen3.5-4b-q4_k_m
   temperature: 0.0

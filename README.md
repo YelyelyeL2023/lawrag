@@ -19,12 +19,16 @@ Docker is the only prerequisite. There is nothing to install on the host — no
 Python, no virtualenv, no `pip install -e`.
 
 ```bash
-scripts/bootstrap.sh          # Windows: scripts\bootstrap.ps1
+docker/scripts/bootstrap.sh          # Windows: docker\scripts\bootstrap.ps1
 ```
 
-or the same thing by hand:
+or the same thing by hand. Every `docker compose` command in this README runs
+from `docker/`, where all Docker specifics live — the compose files, the
+Dockerfile and its `.env`. Nothing outside that directory knows it is running
+in a container.
 
 ```bash
+cd docker
 docker compose build app
 docker compose up -d --wait db                                   # Postgres 16 + pgvector
 docker compose run --rm cli ingest data/sample --reset --no-verify
@@ -61,7 +65,7 @@ go through identical code.
 Two image targets, because the weights stack dwarfs everything else: `runtime`
 (~390 MB — CLI, API, ingest, retrieval, a llama.cpp client) and `models`
 (~10 GB, adding torch + FlagEmbedding for bge-m3 and the reranker).
-`LAWRAG_TARGET` in `.env` picks one; it defaults to `models`, because the
+`LAWRAG_TARGET` in `docker/.env` picks one; it defaults to `models`, because the
 shipped config asks for bge-m3.
 
 What stays outside the image is deliberate: the corpus, the weights and the
@@ -76,7 +80,7 @@ so it lives in an overlay instead of a flag:
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ```
 
-Set `COMPOSE_FILE` in `.env` to make that the default. Needs the NVIDIA
+Set `COMPOSE_FILE` in `docker/.env` to make that the default. Needs the NVIDIA
 Container Toolkit (Docker Desktop provides it on WSL2 with a current driver).
 
 **Air gap.** Move images, not wheels. On the connected side:
@@ -93,8 +97,9 @@ wheelhouse to assemble, and no host interpreter whose version has to match.
 **Configuration.** `config/default.yaml` is where a setting is reasoned about;
 anything that differs between deployments is an environment variable that
 overrides it, spelled `LAWRAG_<SECTION>_<FIELD>` — `LAWRAG_DB_DSN`,
-`LAWRAG_EMBEDDING_DEVICE`, `LAWRAG_LLM_BASE_URL`. `docker-compose.yml` sets
-exactly those, which is why the YAML names container paths and no drive letters.
+`LAWRAG_EMBEDDING_DEVICE`, `LAWRAG_LLM_BASE_URL`. The YAML carries
+local-development defaults and no container hostnames or paths;
+`docker/docker-compose.yml` sets exactly those variables for the containers.
 
 ---
 
@@ -285,7 +290,7 @@ the bge reranker, and llama.cpp. What they need is the weights, in `MODEL_DIR`
 on the host, mounted at `/models` in every container:
 
 ```bash
-scripts/download_models.sh        # connected side; Windows: scripts\download_models.ps1
+docker/scripts/download_models.sh        # connected side; Windows: docker\scripts\download_models.ps1
 ```
 
 That lands `bge-m3/` and `bge-reranker-v2-m3/` under `MODEL_DIR`; put the
@@ -293,9 +298,9 @@ That lands `bge-m3/` and `bge-reranker-v2-m3/` under `MODEL_DIR`; put the
 that will later load the weights, so what is fetched is what is loaded.
 
 ```bash
-scripts/serve_llm.sh A    # Qwen3.5-9B Q4_K_M, full GPU offload, ~50 tok/s
-scripts/serve_llm.sh B    # Qwen3.6-35B-A3B, MoE experts in RAM, ~30 tok/s
-scripts/serve_llm.sh B --cpu   # no card
+docker/scripts/serve_llm.sh A    # Qwen3.5-9B Q4_K_M, full GPU offload, ~50 tok/s
+docker/scripts/serve_llm.sh B    # Qwen3.6-35B-A3B, MoE experts in RAM, ~30 tok/s
+docker/scripts/serve_llm.sh B --cpu   # no card
 ```
 
 Both scripts are wrappers around `docker compose --profile llm up -d llm`: the
@@ -374,18 +379,23 @@ recall.
 ## Layout
 
 ```
-Dockerfile                  two targets: runtime (no weights stack) and models
-docker-compose.yml          db, api, cli, tests, llm, model download
-docker-compose.gpu.yml      GPU overlay — device reservations, the CUDA llama.cpp
-.env.example                this machine: weights dir, ports, image target
-sql/001_schema.sql          bitemporal schema + overlap constraints, versioned
-                            citation graph, glossary, audit log
+docker/                     everything Docker-specific, and nothing else is
+  Dockerfile                two targets: runtime (no weights stack) and models
+  Dockerfile.dockerignore   build-context hygiene (BuildKit per-Dockerfile ignore)
+  docker-compose.yml        db, api, cli, tests, llm, model download
+  docker-compose.gpu.yml    GPU overlay — device reservations, the CUDA llama.cpp
+  .env.example              this machine: weights dir, ports, image target
+  scripts/
+    bootstrap.*             clean clone to a working system, in containers
+    download_models.*       connected-side weight fetch, in a container
+    serve_llm.*             generator profiles A/B as compose variables
 config/default.yaml         every knob, with the reasoning next to it
 scripts/
-  bootstrap.*               clean clone to a working system, in containers
-  download_models.*         connected-side weight fetch, in a container
-  serve_llm.*               generator profiles A/B as compose variables
+  download_models.py        the weight fetch itself
+  resume_ingest.py          finish an interrupted ingest
 src/lawrag/
+  sql/001_schema.sql        bitemporal schema + overlap constraints, versioned
+                            citation graph, glossary, audit log
   models.py                 canonical legal document model, norm hierarchy
   ingest/
     fetch_adilet.py         connected-side snapshot fetcher

@@ -6,9 +6,9 @@
 #             Needs ~20 GB free RAM; 64 GB total is comfortable, 32 GB is
 #             tight once Postgres is also running.
 #
-#   scripts/serve_llm.sh            Profile B on the GPU
-#   scripts/serve_llm.sh A          Profile A on the GPU
-#   scripts/serve_llm.sh B --cpu    no card: CPU image, all layers on the CPU
+#   docker/scripts/serve_llm.sh            Profile B on the GPU
+#   docker/scripts/serve_llm.sh A          Profile A on the GPU
+#   docker/scripts/serve_llm.sh B --cpu    no card: CPU image, all layers on the CPU
 #
 # The weights themselves are not in the image: MODEL_DIR is mounted read-only
 # at /models, so switching models is a variable, not a rebuild.

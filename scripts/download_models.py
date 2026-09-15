@@ -10,15 +10,9 @@ model directories under MODEL_DIR, matching the paths in config/default.yaml:
 Those directories are self-contained and are what you carry across the air gap.
 The query path never downloads; it loads these local folders.
 
-Run it through the container, so the environment that downloads the weights is
-the one that will load them:
+Needs the `models` extra installed:
 
-    scripts/download_models.sh        (Windows: the .ps1 wrapper beside it)
-    docker compose --profile download run --rm download-models
-
-MODEL_DIR is the host directory mounted at /models; set it on the host, not
-here. The default below is the in-container mount point, which is what the
-compose service passes in.
+    MODEL_DIR=/srv/weights python scripts/download_models.py
 """
 from __future__ import annotations
 
@@ -27,7 +21,7 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
-MODEL_DIR = Path(os.environ.get("MODEL_DIR", "/models"))
+MODEL_DIR = Path(os.environ.get("MODEL_DIR", "models"))
 
 # repo id -> (local subfolder, patterns to skip). The ignored files are ONNX /
 # Keras exports and repo images that FlagEmbedding never loads — skipping them
@@ -47,8 +41,8 @@ def main() -> None:
         snapshot_download(repo_id=repo, local_dir=str(dest), ignore_patterns=ignore)
         print(f"    done: {dest}")
     print(f"\nAll models downloaded under {MODEL_DIR}")
-    print("Next: nothing to install — the lawrag `models` image already carries")
-    print("torch + FlagEmbedding. Start with: docker compose up -d")
+    print("Next: carry this tree across the air gap and point")
+    print("LAWRAG_EMBEDDING_MODEL_PATH / LAWRAG_RERANK_MODEL_PATH at it.")
 
 
 if __name__ == "__main__":

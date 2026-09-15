@@ -177,15 +177,14 @@ function errorBox(err) {
   if (isDb) {
     heading = 'База данных недоступна. ';
     remedy = h('div', { style: 'margin-top:6px' },
-      'Проверьте, что контейнер ', h('span.mono', 'lawrag-db'),
-      ' запущен: ', h('span.mono', 'docker compose up -d'));
+      'Проверьте доступность сервера и значение ', h('span.mono', 'LAWRAG_DB_DSN'),
+      '.');
   } else if (isStack) {
     heading = 'Модели не загружены. ';
     remedy = h('div', { style: 'margin-top:6px' },
-      'Образ, из которого запущен сервер, не содержит нужного пакета. ',
-      'Пересоберите его со стеком весов — ',
-      h('span.mono', 'LAWRAG_TARGET=models docker compose build app'), ', затем ',
-      h('span.mono', 'docker compose up -d app'), '.');
+      'В окружении, из которого запущен сервер, нет нужного пакета. ',
+      'Установите стек весов — ',
+      h('span.mono', 'lawrag[models]'), ', затем перезапустите сервер.');
   }
   return h('div.banner.bad', icon('i-warn'),
     h('div', h('strong', heading), detail, remedy));
@@ -1036,7 +1035,7 @@ async function viewMonitor(root) {
   if (!live) {
     root.append(h('div.banner.bad', icon('i-warn'),
       h('div', h('strong', 'База данных недоступна. '), stats.database.error || '',
-        h('div', { style: 'margin-top:6px' }, 'Запросы не выполняются. ', h('span.mono', 'docker compose up -d')))));
+        h('div', { style: 'margin-top:6px' }, 'Запросы не выполняются. Проверьте ', h('span.mono', 'LAWRAG_DB_DSN'), '.'))));
   }
   const rt = stats.runtime;
   const missing = rt.missing_modules || [];
@@ -1052,16 +1051,14 @@ async function viewMonitor(root) {
             'Конфигурация требует ',
             ...missing.map((m, i) => [i ? ', ' : '', h('span.mono', m.backend),
               ' (', h('span.mono', m.module), ')']),
-            ', но этих пакетов нет в образе, из которого запущен сервер.',
+            ', но этих пакетов нет в окружении, из которого запущен сервер.',
           ]
           : rt.answering_error,
         h('div', { style: 'margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' },
-          h('span.dim', 'интерпретатор'), h('span.mono', rt.python || '—'),
-          rt.in_container ? null : chip('вне контейнера', 'bad')),
+          h('span.dim', 'интерпретатор'), h('span.mono', rt.python || '—')),
         h('div', { style: 'margin-top:7px' },
-          'Пересоберите образ со стеком весов: ',
-          h('span.mono', 'LAWRAG_TARGET=models docker compose build app'), ' → ',
-          h('span.mono', 'docker compose up -d app'), '.'))));
+          'Установите стек весов: ',
+          h('span.mono', 'lawrag[models]'), ' и перезапустите сервер.'))));
   } else if (rt.llm && rt.llm.reachable === false) {
     root.append(h('div.banner.bad', icon('i-warn'),
       h('div',
@@ -1341,7 +1338,7 @@ function runtimeCard(rt) {
     ['бюджет контекста', `${n(rt.max_packet_tokens)} т.`, false],
     ['кросс-язык', rt.cross_language ? 'вкл' : 'выкл', false],
     ['база', rt.dsn, false],
-    ['интерпретатор', rt.python || '—', rt.in_container === false],
+    ['интерпретатор', rt.python || '—', false],
     // What the environment changed out from under config/default.yaml.
     ['переопределено средой',
       (rt.env_overrides && rt.env_overrides.length) ? rt.env_overrides.join(', ') : '—',

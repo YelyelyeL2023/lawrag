@@ -4,12 +4,12 @@
 # later loads the weights. Nothing is installed into a host Python, and there
 # is no virtualenv: the old .venv\Scripts\python.exe path is gone.
 #
-#   scripts\download_models.ps1
-#   $env:MODEL_DIR="E:\weights"; scripts\download_models.ps1
+#   docker\scripts\download_models.ps1
+#   $env:MODEL_DIR="E:\weights"; docker\scripts\download_models.ps1
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
-if (-not $env:MODEL_DIR) { $env:MODEL_DIR = "./models" }
+if (-not $env:MODEL_DIR) { $env:MODEL_DIR = "../models" }
 New-Item -ItemType Directory -Force -Path $env:MODEL_DIR | Out-Null
 
 Write-Host "==> downloading into $env:MODEL_DIR"

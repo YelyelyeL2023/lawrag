@@ -1,8 +1,8 @@
 # Start the generator as a container on Windows.
 #
-#   scripts\serve_llm.ps1              Profile B (Qwen3.6-35B-A3B MoE) on the GPU
-#   scripts\serve_llm.ps1 A            Profile A (Qwen3.5-9B dense) on the GPU
-#   scripts\serve_llm.ps1 B -Cpu       no card: CPU image, all layers on the CPU
+#   docker\scripts\serve_llm.ps1              Profile B (Qwen3.6-35B-A3B MoE) on the GPU
+#   docker\scripts\serve_llm.ps1 A            Profile A (Qwen3.5-9B dense) on the GPU
+#   docker\scripts\serve_llm.ps1 B -Cpu       no card: CPU image, all layers on the CPU
 #
 # llama-server now comes from the llama.cpp image, so there is no llama-server.exe
 # to install and no PATH to get right. Docker Desktop must have GPU support

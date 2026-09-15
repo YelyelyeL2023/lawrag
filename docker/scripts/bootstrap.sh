@@ -4,8 +4,8 @@
 # The only thing this needs on the host is Docker. No Python, no virtualenv,
 # no pip install -e: every command below runs inside the lawrag image.
 #
-#   scripts/bootstrap.sh          CPU
-#   scripts/bootstrap.sh --gpu    add the GPU overlay (embedder on the card)
+#   docker/scripts/bootstrap.sh          CPU
+#   docker/scripts/bootstrap.sh --gpu    add the GPU overlay (embedder on the card)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

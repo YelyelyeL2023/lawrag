@@ -43,7 +43,7 @@ def _load_dotenv(path: Path | None = None) -> None:
 
 @dataclass
 class DBConfig:
-    dsn: str = "postgresql://postgres:2006@localhost:5432/postgres"
+    dsn: str = "postgresql://localhost:5432/lawrag"
     statement_timeout_ms: int = 30_000
 
 
@@ -173,9 +173,9 @@ def _coerce(raw: str, current: Any) -> Any:
 def _apply_env(cfg: Config) -> list[str]:
     """Override any scalar setting from `LAWRAG_<SECTION>_<FIELD>`.
 
-    Containers are configured by environment, not by editing a file baked into
-    an image: the same image has to run against `db:5432` in compose and a
-    remote Postgres in production without a second copy of default.yaml. The
+    Deployments are configured by environment, not by editing a checked-in
+    file: the same code has to run against a local Postgres and a
+    remote server without a second copy of default.yaml. The
     YAML stays the place where a setting is *reasoned about*; the environment is
     where a deployment says where things are.
 

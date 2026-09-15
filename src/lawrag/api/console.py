@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import os
 import re
 import sys
 import threading
@@ -86,17 +85,6 @@ def _jsonable(value: Any) -> Any:
 # conflating them is how a system reports "production ready" and then returns
 # HTTP 500 on the first question because the server is running the `runtime`
 # image, which carries no FlagEmbedding, against a config asking for bge-m3.
-
-def _in_container() -> bool:
-    """Whether this process is the containerised one compose starts.
-
-    LAWRAG_IN_CONTAINER is set in the image; /.dockerenv is the fallback for an
-    image someone built by hand. Neither is load-bearing — it is a diagnostic,
-    and the authoritative answer to "can this process answer questions" is
-    _missing_modules below.
-    """
-    return bool(os.environ.get("LAWRAG_IN_CONTAINER")) or Path("/.dockerenv").exists()
-
 
 def _required_modules(c: Config) -> list[dict]:
     """The third-party modules this configuration will import on first use."""
@@ -214,12 +202,10 @@ def stats() -> dict:
         "cross_language": c.retrieval.cross_language,
         "dsn": re.sub(r"//[^@/]*@", "//***@", c.db.dsn),
         # The interpreter is reported because it is the single most common cause
-        # of a missing module here: the `models` image carries the weights
-        # stack, the `runtime` image deliberately does not. Running outside a
-        # container at all is worth saying out loud too — it means the process
-        # is not the one compose is managing.
+        # of a missing module here: the weights stack is the optional `models`
+        # extra, and a server started from an environment installed without it
+        # cannot load bge-m3.
         "python": sys.executable,
-        "in_container": _in_container(),
         # Which settings the environment overrode. Without it, a config file
         # saying one thing and a running system doing another is a silent
         # contradiction the operator has no way to see.

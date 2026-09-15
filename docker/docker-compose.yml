@@ -1,6 +1,11 @@
 # Everything lawrag needs, as containers. Nothing is installed on the host: no
 # Python, no virtualenv, no pip. `docker compose` is the only prerequisite.
 #
+# All Docker specifics live in this directory; the application only reads
+# config/default.yaml and LAWRAG_* variables, which the services below set.
+# Relative paths here resolve against docker/, and compose reads docker/.env.
+#
+#   cd docker
 #   docker compose up -d                       db + api + console
 #   docker compose run --rm cli stats          any CLI command
 #   docker compose --profile llm up -d llm     the local generator
@@ -9,6 +14,10 @@
 # (docker save / docker load) rather than pulling.
 #
 # GPU: overlay docker-compose.gpu.yml on top of this file. See README.
+
+# Pinned, not derived from the directory name: the project name prefixes the
+# volume, and a rename would silently orphan the ingested corpus.
+name: lawrag
 
 services:
   # ---------------------------------------------------------------- db --
@@ -27,7 +36,7 @@ services:
       - "127.0.0.1:${DB_HOST_PORT:-5433}:5432"
     volumes:
       - lawrag-pgdata:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d:ro
+      - ../src/lawrag/sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-lawrag}"]
       interval: 5s
@@ -46,7 +55,8 @@ services:
   # --------------------------------------------------------------- api --
   app:
     build:
-      context: .
+      context: ..
+      dockerfile: docker/Dockerfile
       # `models` carries torch + FlagEmbedding, which config/default.yaml's
       # bge-m3 backends need. Set LAWRAG_TARGET=runtime for a much smaller
       # image when the config uses the hash/echo placeholders or a remote
@@ -75,11 +85,11 @@ services:
       # The container runs as uid 10001. Docker Desktop maps that transparently;
       # on a Linux host, ./data must be writable by it — console uploads and
       # data/context_cache.json land there.
-      - ./config:/app/config:ro
-      - ./data:/app/data
-      - ${MODEL_DIR:-./models}:/models
+      - ../config:/app/config:ro
+      - ../data:/app/data
+      - ${MODEL_DIR:-../models}:/models
       # Live code. Drop this line for a sealed deployment image.
-      - ./src:/app/src
+      - ../src:/app/src
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8000}:8000"
     restart: unless-stopped
@@ -91,7 +101,8 @@ services:
   #   docker compose run --rm cli eval
   cli:
     build:
-      context: .
+      context: ..
+      dockerfile: docker/Dockerfile
       target: ${LAWRAG_TARGET:-models}
     image: lawrag:${LAWRAG_TARGET:-models}
     depends_on:
@@ -115,7 +126,8 @@ services:
   # fixture creates it on first run.
   tests:
     build:
-      context: .
+      context: ..
+      dockerfile: docker/Dockerfile
       target: ${LAWRAG_TARGET:-models}
     image: lawrag:${LAWRAG_TARGET:-models}
     depends_on:
@@ -125,10 +137,10 @@ services:
       <<: *lawrag_env
       LAWRAG_TEST_DSN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-2006}@db:5432/${POSTGRES_DB:-lawrag}_test
     volumes:
-      - ./config:/app/config:ro
-      - ./data:/app/data
-      - ./src:/app/src
-      - ./tests:/app/tests
+      - ../config:/app/config:ro
+      - ../data:/app/data
+      - ../src:/app/src
+      - ../tests:/app/tests
     entrypoint: ["pytest"]
     command: ["-q"]
     healthcheck:
@@ -147,7 +159,7 @@ services:
     image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
     container_name: lawrag-llm
     volumes:
-      - ${MODEL_DIR:-./models}:/models:ro
+      - ${MODEL_DIR:-../models}:/models:ro
     ports:
       - "127.0.0.1:${LLM_HOST_PORT:-8080}:8080"
     command: >
@@ -176,7 +188,8 @@ services:
   #   docker compose --profile download run --rm download-models
   download-models:
     build:
-      context: .
+      context: ..
+      dockerfile: docker/Dockerfile
       target: models
     image: lawrag:models
     environment:
@@ -185,7 +198,7 @@ services:
       HF_HUB_OFFLINE: "0"
       TRANSFORMERS_OFFLINE: "0"
     volumes:
-      - ${MODEL_DIR:-./models}:/models
+      - ${MODEL_DIR:-../models}:/models
     entrypoint: ["python", "scripts/download_models.py"]
     healthcheck:
       disable: true

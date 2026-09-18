@@ -83,16 +83,19 @@ class BGEM3Embedder:
 
         self.dim = cfg.dim
         self.cfg = cfg
+        self._fp16 = cfg.device.startswith("cuda")
         log.info("loading BGE-M3 from %s on %s", cfg.model_path, cfg.device)
         self._model = BGEM3FlagModel(
             cfg.model_path,
-            use_fp16=cfg.device.startswith("cuda"),
+            use_fp16=self._fp16,
             device=cfg.device,
             normalize_embeddings=cfg.normalize,
         )
+        self._model_fp32 = None
+        self.fp32_fallbacks = 0
 
-    def encode(self, texts: Sequence[str], is_query: bool = False) -> np.ndarray:
-        out = self._model.encode(
+    def _encode_with(self, model, texts: Sequence[str], is_query: bool) -> np.ndarray:
+        out = model.encode(
             list(texts),
             batch_size=self.cfg.batch_size,
             max_length=512 if is_query else self.cfg.max_length,
@@ -101,6 +104,35 @@ class BGEM3Embedder:
             return_colbert_vecs=False,
         )
         return np.asarray(out["dense_vecs"], dtype=np.float32)
+
+    def encode(self, texts: Sequence[str], is_query: bool = False) -> np.ndarray:
+        vectors = self._encode_with(self._model, texts, is_query)
+        bad = np.where(~np.isfinite(vectors).all(axis=1))[0]
+        if len(bad) == 0 or not self._fp16:
+            return vectors
+        # Half precision overflows on some long statutory chunks (a few per
+        # code, and only in particular batch compositions), and the result
+        # is a NaN vector that Postgres refuses. Those rows are recomputed in
+        # full precision by a second copy of the model on the same device:
+        # rare enough that the extra memory is the cheaper trade against
+        # running everything in fp32.
+        if self._model_fp32 is None:
+            from FlagEmbedding import BGEM3FlagModel
+
+            log.warning("fp16 embedding produced %d non-finite vector(s); loading an fp32 "
+                        "copy of the model for those rows", len(bad))
+            self._model_fp32 = BGEM3FlagModel(
+                self.cfg.model_path, use_fp16=False, device=self.cfg.device,
+                normalize_embeddings=self.cfg.normalize,
+            )
+        redo = self._encode_with(self._model_fp32, [texts[i] for i in bad], is_query)
+        vectors[bad] = redo
+        self.fp32_fallbacks += len(bad)
+        still = np.where(~np.isfinite(vectors).all(axis=1))[0]
+        if len(still):
+            raise ValueError(f"embedding is non-finite even in fp32 for {len(still)} text(s); "
+                             f"first: {texts[still[0]][:120]!r}")
+        return vectors
 
 
 class SentenceTransformerEmbedder:

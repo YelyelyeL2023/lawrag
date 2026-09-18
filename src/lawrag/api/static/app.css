@@ -464,6 +464,18 @@ select { padding-right: 26px; }
   max-width: var(--measure);
 }
 
+mark {
+  background: var(--warn-wash);
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+a.nodelink { font-size: 12px; }
+a.pin { color: var(--ink); }
+a.pin:hover { color: var(--accent); }
+
 /* ----------------------------------------------------------------- table  */
 
 table.grid { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -705,7 +717,9 @@ figure.chart .cap-d { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
   .split, .split.wide-left { grid-template-columns: 1fr; }
 }
 @media (max-width: 860px) {
-  .app { grid-template-columns: 1fr; }
+  /* One column, two rows. Without explicit rows the grid's min-height is
+     shared between both auto rows and a 200px gap opens under the nav. */
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .sidebar { position: static; height: auto; flex-direction: row; align-items: center; gap: 14px; overflow-x: auto; }
   .brand { padding: 0 12px 0 0; }
   .brand .sub { display: none; }

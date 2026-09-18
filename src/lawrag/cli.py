@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -15,6 +16,24 @@ from rich.table import Table
 from .config import load_config
 from .logging_setup import setup_logging
 from .models import Lang
+
+def _utf8_stdio() -> None:
+    """Make the CLI's output UTF-8 regardless of the console's code page.
+
+    Everything this tool prints — headings, statutory text, the console's
+    URL line — is Cyrillic. On a Windows terminal with a legacy code page
+    (cp1252, cp866) Python's stdout cannot encode it and `lawrag serve`
+    crashed before binding the port; `lawrag search` died on its first hit.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):  # closed or exotic stream
+                pass
+
+
+_utf8_stdio()
 
 app = typer.Typer(add_completion=False, help=__doc__, no_args_is_help=True)
 console = Console()
@@ -410,11 +429,118 @@ def serve(host: str = typer.Option("127.0.0.1"), port: int = typer.Option(8000),
     from .api.security import warn_if_exposed
 
     _cfg(config)
+    # uvicorn imports lawrag.api.main by name, and that module builds its own
+    # config from the environment. Without this, --config was validated here
+    # and then silently ignored by the server it started.
+    if config:
+        os.environ["LAWRAG_CONFIG"] = str(Path(config).resolve())
     if warning := warn_if_exposed(host):
         console.print(f"[yellow]warning[/yellow] {warning}")
     console.print(f"[green]API[/green]     http://{host}:{port}/docs")
     console.print(f"[green]Консоль[/green] http://{host}:{port}/")
     uvicorn.run("lawrag.api.main:app", host=host, port=port, reload=False)
+
+
+# ---------------------------------------------------------------- train --
+@app.command("train-pairs")
+def train_pairs_cmd(path: Path = typer.Argument(..., help="Corpus directory (e.g. data/adilet)."),
+                    out: Path = typer.Option(Path("data/train"), help="Where to write the pairs."),
+                    dev_fraction: float = typer.Option(0.05, help="Share of articles held out."),
+                    doc2query: bool = typer.Option(False, help="Ask the local LLM for questions per chunk."),
+                    query_log: bool = typer.Option(True, help="Add verified questions from query_log."),
+                    config: Optional[str] = ConfigOpt):
+    """Mine training pairs from the corpus itself — no labelled data needed.
+
+    Writes pairs.train.jsonl, pairs.dev.jsonl and corpus.jsonl. The dev set
+    holds out whole articles, so its queries point at text the model never
+    saw as a positive.
+    """
+    from .train.pairs import KINDS, mine_directory, split_pairs, write_jsonl
+
+    cfg = _cfg(config)
+    pairs, corpus = mine_directory(cfg, path, doc2query=doc2query, query_log=query_log,
+                                   cache_dir=out)
+    train, dev = split_pairs(pairs, dev_fraction=dev_fraction)
+    write_jsonl(out / "pairs.train.jsonl", (p.to_dict() for p in train))
+    write_jsonl(out / "pairs.dev.jsonl", (p.to_dict() for p in dev))
+    write_jsonl(out / "corpus.jsonl", corpus.to_records())
+
+    table = Table(title=f"training pairs -> {out}")
+    table.add_column("kind")
+    table.add_column("train", justify="right")
+    table.add_column("dev", justify="right")
+    for kind in KINDS:
+        nt = sum(1 for p in train if p.kind == kind)
+        nd = sum(1 for p in dev if p.kind == kind)
+        if nt or nd:
+            table.add_row(kind, f"{nt:,}", f"{nd:,}")
+    table.add_row("[bold]total[/bold]", f"[bold]{len(train):,}[/bold]", f"[bold]{len(dev):,}[/bold]")
+    console.print(table)
+    console.print(f"corpus: {len(corpus.chunks):,} chunks")
+
+
+@app.command("train")
+def train_cmd(pairs: Path = typer.Option(Path("data/train"), help="Directory written by train-pairs."),
+              base: Path = typer.Option(Path("models/bge-m3"), help="Base sentence-transformers model."),
+              out: Path = typer.Option(Path("models/bge-m3-lawrag"), help="Where to save the result."),
+              epochs: float = typer.Option(1.0),
+              batch_size: int = typer.Option(32, help="Effective batch (in-batch negatives)."),
+              mini_batch_size: int = typer.Option(8, help="What is encoded at once; sets VRAM use."),
+              learning_rate: float = typer.Option(2e-5),
+              max_seq_length: int = typer.Option(512),
+              train_layers: int = typer.Option(8, help="Top transformer layers to update; 0 = all."),
+              hard_negatives: bool = typer.Option(True, help="Mine one hard negative per pair with the base model."),
+              max_pairs: Optional[int] = typer.Option(None, help="Cap the training set (time budget)."),
+              device: Optional[str] = typer.Option(None, help="cuda | cpu; auto if omitted."),
+              config: Optional[str] = ConfigOpt):
+    """Fine-tune the embedder on the mined pairs.
+
+    Afterwards point embedding.model_path (LAWRAG_EMBEDDING_MODEL_PATH) at the
+    output directory, re-ingest so every chunk is re-embedded, and re-run
+    `calibrate`: min_dense_score is on the model's own scale and moves with it.
+    """
+    from .train.finetune import TrainSettings, finetune
+    from .train.pairs import read_jsonl, read_pairs
+
+    _cfg(config)
+    train_pairs = read_pairs(pairs / "pairs.train.jsonl")
+    corpus = read_jsonl(pairs / "corpus.jsonl")
+    settings = TrainSettings(
+        base=str(base), out=str(out), epochs=epochs, batch_size=batch_size,
+        mini_batch_size=mini_batch_size, learning_rate=learning_rate,
+        max_seq_length=max_seq_length,
+        train_layers=train_layers if train_layers > 0 else 10**6,
+        hard_negatives=hard_negatives, max_pairs=max_pairs, device=device,
+    )
+    result = finetune(settings, train_pairs, corpus, cache_dir=pairs / "cache")
+    console.print(f"[green]saved[/green] {result}")
+    console.print("next: LAWRAG_EMBEDDING_MODEL_PATH=<that path>, re-ingest, then `lawrag calibrate`")
+
+
+@app.command("train-eval")
+def train_eval_cmd(models: list[Path] = typer.Argument(..., help="One or more model directories to compare."),
+                   pairs: Path = typer.Option(Path("data/train"), help="Directory written by train-pairs."),
+                   split: str = typer.Option("dev", help="dev | train"),
+                   max_queries: Optional[int] = typer.Option(2000, help="Sample this many queries, balanced by kind."),
+                   device: Optional[str] = typer.Option(None),
+                   out: Optional[Path] = typer.Option(None, help="Write the numbers as JSON here too."),
+                   config: Optional[str] = ConfigOpt):
+    """Compare embedders on the held-out articles — dense retrieval, no database.
+
+    Reports recall@1/5/10 and MRR per pair kind. `xref` (citation sentences)
+    and `querylog` are the kinds that look most like real questions.
+    """
+    from .train.evaluate import evaluate, print_results, save_results
+    from .train.pairs import read_jsonl, read_pairs
+
+    _cfg(config)
+    dev = read_pairs(pairs / f"pairs.{split}.jsonl")
+    corpus = read_jsonl(pairs / "corpus.jsonl")
+    results = [evaluate(m, dev, corpus, device=device, cache_dir=pairs / "cache",
+                        max_queries=max_queries) for m in models]
+    print_results(results, console)
+    if out:
+        save_results(out, results)
 
 
 if __name__ == "__main__":

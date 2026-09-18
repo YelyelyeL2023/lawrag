@@ -72,7 +72,9 @@ services:
       # these are the values that differ between a container and a host, and
       # they override the YAML (see config.py: LAWRAG_<SECTION>_<FIELD>).
       LAWRAG_DB_DSN: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-2006}@db:5432/${POSTGRES_DB:-lawrag}
-      LAWRAG_EMBEDDING_MODEL_PATH: /models/bge-m3
+      # bge-m3 as downloaded, or the corpus-adapted bge-m3-lawrag that
+      # `lawrag train` writes next to it (see README, "Adapting the models").
+      LAWRAG_EMBEDDING_MODEL_PATH: /models/${EMBEDDING_MODEL:-bge-m3}
       LAWRAG_RERANK_MODEL_PATH: /models/bge-reranker-v2-m3
       LAWRAG_EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
       LAWRAG_RERANK_DEVICE: ${RERANK_DEVICE:-cpu}

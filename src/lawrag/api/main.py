@@ -210,6 +210,20 @@ if _STATIC.is_dir():
     # mounted at "/" it would not.
     app.mount("/ui", StaticFiles(directory=_STATIC, html=True), name="ui")
 
+    @app.middleware("http")
+    async def _revalidate_console(request, call_next):
+        """No heuristic caching for the console's files.
+
+        StaticFiles sends an ETag but no Cache-Control, so a browser may keep
+        an old app.js for hours after an upgrade and run stale code against a
+        new API. no-cache still allows the conditional request, which costs
+        one 304 per file per load — nothing on a loopback connection.
+        """
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/ui/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
         return FileResponse(_STATIC / "index.html")

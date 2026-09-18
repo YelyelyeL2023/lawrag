@@ -13,3 +13,5 @@ data/context_cache.json
 models/
 data/uploads/
 *.bak
+data/train/
+.claude/

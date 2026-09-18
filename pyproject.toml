@@ -23,6 +23,9 @@ models = [
   "sentence-transformers>=3.0",
   "FlagEmbedding>=1.2",
   "torch>=2.2",
+  # Only `lawrag train` needs this; it rides with the weights stack because
+  # that is the image with a GPU.
+  "datasets>=2.19",
 ]
 dev = ["pytest>=8.0"]
 

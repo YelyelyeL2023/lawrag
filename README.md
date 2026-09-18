@@ -107,7 +107,11 @@ local-development defaults and no container hostnames or paths;
 `config/local.yaml` is the same pipeline on the placeholder models, for running
 `lawrag` from a host interpreter against the compose database:
 `LAWRAG_CONFIG=config/local.yaml lawrag stats`. The test suite pins the same
-placeholders.
+placeholders. Both name the database as `127.0.0.1`, not `localhost`: compose
+publishes the port on IPv4 loopback only, and a Windows host resolves
+`localhost` to `::1` first, so each connection would wait out a timeout before
+falling back. `config/host-gpu.yaml` is the same again with the fine-tuned
+embedder on the host's card.
 
 ---
 
@@ -129,6 +133,13 @@ requests — no CDN, no web fonts, no npm — because the machine it runs on has
 network, and a console that degrades when a font server is unreachable is not a
 console. Upload is JSON-with-text rather than multipart so that no extra wheel
 (`python-multipart`) has to be carried across the air gap.
+
+Every node id the console shows is a link into **Корпус** — a search hit, a
+packet source, a citation in an answer, a chunk in the query log — which opens
+that article in that language on that redaction date. Search results
+highlight the query's word stems, so a Kazakh case ending or a Russian
+declension still lights up, and hits from one article say which point matched.
+Import history rows open the job's log.
 
 The extra endpoints live in `api/console.py` under `/api`, and every one of them
 is read-only except `POST /api/ingest`. `api/main.py` is unchanged in substance:
@@ -381,6 +392,85 @@ prompt in `generate/prompts.py` states this as a hard rule.
 
 ---
 
+## Adapting the models to the corpus
+
+bge-m3 and the bge reranker were trained on general web text. Kazakh
+statutory language is a long way from that, and the lever that moves
+retrieval quality here is not a bigger model but the same model fine-tuned on
+this corpus. There is no labelled data, so the corpus is its own supervision
+(`train/pairs.py`):
+
+| pair kind | query | positive | what it teaches |
+| --- | --- | --- | --- |
+| `heading` | the article's title | the article | terse queries, the way people actually type |
+| `xref` | the sentence that cites article B, **with the citation cut out** | article B | meaning, not numbers: "в порядке, установленном ___" must find the registration article without "статьей 76" to match on |
+| `xlang` | the Russian text of a node | its Kazakh text (and back) | the two legal vocabularies land in one space, so a Kazakh question finds the Russian article |
+| `definition` | a defined term, bare and as a question | the definition | glossary lookups |
+| `doc2query` | questions the local LLM writes per chunk (`--doc2query`) | the chunk | realistic phrasing; cached by content hash |
+| `querylog` | real questions whose every citation passed verification | the cited article | what users ask — the only kind that is not derived from the text itself |
+
+```bash
+docker compose run --rm cli train-pairs data/adilet             # -> data/train/
+docker compose run --rm cli train-eval /models/bge-m3           # baseline, no database needed
+docker compose run --rm cli train --base /models/bge-m3 --out /models/bge-m3-lawrag
+docker compose run --rm cli train-eval /models/bge-m3 /models/bge-m3-lawrag
+```
+
+`train` is contrastive (`MultipleNegativesRankingLoss`): every other positive
+in the batch is a negative, plus one **hard negative** per query — the
+best-ranked *wrong* article under the base model, which is what teaches the
+difference between article 277 and article 278. It is sized for an 8 GB card:
+the cached loss encodes in mini-batches, only the top eight transformer layers
+are updated (the lower ones hold the multilingual knowledge the model came
+with; freezing them cuts optimiser memory by two thirds and guards against
+forgetting on a corpus this small), and gradient checkpointing is on. One
+epoch over the adilet snapshot is under an hour on a laptop GPU.
+
+`train-eval` holds out whole articles (5% by default), so no dev query points
+at text that was a training positive, and ranks every chunk in the corpus by
+cosine similarity — the dense branch alone, no lexical fusion, floor or
+reranker. Absolute numbers are therefore below end-to-end recall; the
+difference between two models on the same queries is what it is for. `xref`
+is the kind that looks most like a real question.
+
+Measured on the 2026-09-08 adilet snapshot (41 documents, 43,857 chunks,
+31,246 training pairs, one epoch, 78 minutes on an 8 GB laptop GPU), on 1,620
+held-out queries:
+
+| kind | queries | recall@1 base → tuned | recall@10 base → tuned | MRR@10 base → tuned |
+| --- | ---: | ---: | ---: | ---: |
+| `xref` — citation sentences, closest to real questions | 793 | 0.12 → **0.24** | 0.42 → **0.52** | 0.21 → **0.32** |
+| `heading` — article titles | 392 | 0.86 → 0.88 | 0.97 → 0.98 | 0.91 → 0.93 |
+| `xlang` — RU text finds the KK article and back | 435 | 0.86 → 0.79 | 0.98 → 0.98 | 0.91 → 0.86 |
+| all | 1,620 | 0.50 → 0.54 | 0.70 → 0.76 | 0.57 → 0.61 |
+
+The realistic kind nearly doubles at rank 1. The one regression is honest
+and tunable: cross-language matching at rank 1 gave up some ground, because
+the run capped `xlang` pairs at 8,000 to keep citation sentences from being
+drowned out; raise the cap (`DEFAULT_CAPS` in `train/pairs.py`) or train a
+second epoch if bilingual recall matters more than monolingual precision for
+your users. The trained directory is `models/bge-m3-lawrag`, selected with
+`EMBEDDING_MODEL=bge-m3-lawrag` in `docker/.env`; `config/host-gpu.yaml`
+runs it from a host interpreter on the card.
+
+After switching: point `LAWRAG_EMBEDDING_MODEL_PATH` at the new directory
+(it loads through both the `bge-m3` and `sentence-transformers` backends —
+the base model's sparse and ColBERT heads are copied alongside), re-ingest so
+every chunk is re-embedded, and re-run `calibrate`: `min_dense_score` is on
+the model's own scale and moves with it.
+
+Two limits, stated plainly. The pairs are derived from the text, so they
+measure how well the model reads the law, not how well it reads people; the
+query log closes that gap only once the system is in use, and `doc2query`
+approximates it before then. And the corpus cannot currently be enlarged from
+adilet: since September 2026 the site serves act text only to browsers running
+its JavaScript and states in its robots policy that corpus-collecting crawlers
+are closed while search and citation stay open. The fetcher now refuses that
+shell instead of saving it as a document. New text has to come from the
+reference bank export (`--source-dir`).
+
+---
+
 ## Evaluation
 
 ```bash
@@ -443,6 +533,8 @@ docker/                     everything Docker-specific, and nothing else is
     download_models.*       connected-side weight fetch, in a container
     serve_llm.*             generator profiles A/B as compose variables
 config/default.yaml         every knob, with the reasoning next to it
+config/local.yaml           host interpreter, placeholder models
+config/host-gpu.yaml        host interpreter, fine-tuned embedder on CUDA
 scripts/
   download_models.py        the weight fetch itself
   resume_ingest.py          finish an interrupted ingest
@@ -471,6 +563,10 @@ src/lawrag/
   verify/citations.py       mechanical citation checking
   evalkit/harness.py        retrieval eval
   evalkit/calibrate.py      relevance-floor calibration
+  train/
+    pairs.py                training pairs mined from the corpus itself
+    finetune.py             contrastive fine-tune of the embedder, 8 GB-sized
+    evaluate.py             held-out dense retrieval eval, no database
   api/
     main.py                 the CLI-mirroring HTTP surface
     console.py              read-only endpoints for the browser console
@@ -478,7 +574,7 @@ src/lawrag/
     static/                 the console itself: no build step, no CDN
   cli.py
 data/adilet/                real adilet snapshot (HTML + documents.json)
-tests/                      96 tests; DB-backed ones skip without Postgres
+tests/                      106 tests; DB-backed ones skip without Postgres
   fixtures/synthetic/       the invented fixture the suite ingests
   test_regressions.py       one test per defect found in review, each named
                             after the failure it pins down

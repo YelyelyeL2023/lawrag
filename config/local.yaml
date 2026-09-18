@@ -12,7 +12,10 @@
 # set LAWRAG_DB_DSN to point anywhere else.
 
 db:
-  dsn: postgresql://postgres:2006@localhost:5433/lawrag
+  # 127.0.0.1, not localhost: compose publishes the port on IPv4 loopback
+  # only, and Windows resolves localhost to ::1 first, so every connection
+  # would wait out a timeout before falling back to IPv4.
+  dsn: postgresql://postgres:2006@127.0.0.1:5433/lawrag
 
 embedding:
   backend: hash

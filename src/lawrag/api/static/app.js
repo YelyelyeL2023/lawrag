@@ -161,6 +161,65 @@ function pointLabel(src) {
     .replace(/^sp(\d+)/, 'подп. $1');
 }
 
+/** Route to an article in the corpus view: "#/corpus/koap/st278?lang=ru&as_of=…".
+ *  Node ids contain slashes, so the article id is the path and the rest is a
+ *  query string. Anything the console shows a node id for links here: a
+ *  search hit, a packet source, a citation, a logged query — the corpus view
+ *  is where the full text, its redactions and its citation graph live. */
+function corpusHref(nodeId, { lang, as_of } = {}) {
+  const article = String(nodeId || '').split('/').slice(0, 2).join('/');
+  const qs = new URLSearchParams();
+  if (lang) qs.set('lang', lang);
+  if (as_of && !String(as_of).startsWith('9999')) qs.set('as_of', String(as_of).slice(0, 10));
+  const q = qs.toString();
+  return '#/corpus/' + article + (q ? '?' + q : '');
+}
+
+function corpusLink(nodeId, opts, label) {
+  return h('a.mono.nodelink', {
+    href: corpusHref(nodeId, opts), title: 'Открыть в корпусе',
+    // Inside a <summary> a click would also toggle the panel.
+    onclick: (e) => e.stopPropagation(),
+  }, label || nodeId);
+}
+
+/** "koap/st278/p2#ru@2026-01-01" carries the language and redaction. */
+function chunkLink(cid) {
+  const [node, rest] = String(cid).split('#');
+  const [lang, as_of] = (rest || '').split('@');
+  return corpusLink(node, { lang, as_of }, cid);
+}
+
+/** What the corpus view was asked to open, from the hash, or null. */
+function corpusTarget() {
+  const raw = (location.hash || '').replace(/^#\/?/, '');
+  const [path, query] = raw.split('?');
+  const parts = path.split('/');
+  if (parts[0] !== 'corpus' || parts.length < 3 || !parts[2]) return null;
+  const qs = new URLSearchParams(query || '');
+  return { act: parts[1], article: parts.slice(1, 3).join('/'),
+    lang: qs.get('lang') || '', as_of: qs.get('as_of') || '' };
+}
+
+const _WORD = '[A-Za-z0-9\\u0400-\\u04FF]';
+
+/** Wrap the query's word stems in <mark>. Stems of 4–6 letters, so a Russian
+ *  declension or a Kazakh case ending still lights up the word it belongs to. */
+function highlight(text, query) {
+  const words = String(query || '').toLowerCase().match(new RegExp(_WORD + '{4,}', 'g')) || [];
+  const stems = [...new Set(words.map((w) => w.slice(0, Math.min(w.length, 6))))];
+  if (!stems.length || !text) return [text];
+  const re = new RegExp('(' + stems.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')' + _WORD + '*', 'gi');
+  const out = [];
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    out.push(text.slice(last, m.index), h('mark', m[0]));
+    last = m.index + m[0].length;
+  }
+  out.push(text.slice(last));
+  return out;
+}
+
 function loading(label = 'Загрузка…') {
   return h('div.loading', h('span.spinner'), label);
 }
@@ -475,6 +534,13 @@ const ASK_EXAMPLES = [
   'Какой срок давности по административным правонарушениям?',
   'Что считается крупным ущербом в Уголовном кодексе?',
   'Права работника при сокращении штата',
+  'Еңбек шартын бұзудың негіздері қандай?',
+];
+
+const SEARCH_EXAMPLES = [
+  'срок исковой давности',
+  'штраф за нарушение срока постановки на регистрационный учет',
+  'Салық төлеушінің құқықтары',
 ];
 
 function viewAsk(root) {
@@ -538,11 +604,25 @@ function renderAnswer(out) {
         'Нормы найдены и приведены ниже, но сформулировать ответ не удалось: ',
         'на порту генератора никто не слушает.',
         h('div', { style: 'margin-top:7px' },
-          'Запустите llama-server: ', h('span.mono', 'scripts\\serve_llm.ps1'),
-          ' (если бинарника нет в PATH — сначала ',
-          h('span.mono', '$env:LLAMA_SERVER'), '), затем повторите вопрос.'),
+          'Запустите генератор из каталога ', h('span.mono', 'docker/'), ': ',
+          h('span.mono', 'docker compose --profile llm up -d llm'),
+          ' (профили A/B — ', h('span.mono', 'docker/scripts/serve_llm.*'),
+          '), затем повторите вопрос.'),
         h('div', { style: 'margin-top:5px' },
           h('span.dim', { title: a.abstain_reason }, a.abstain_reason)))));
+  }
+
+  if (a.abstain_reason === 'no_model_loaded') {
+    out.append(h('div.banner', { style: 'margin-top:14px;margin-bottom:0' },
+      icon('i-warn'),
+      h('div',
+        h('strong', 'Генератор не настроен. '),
+        'Нормы найдены и приведены ниже; ответ не формулируется, потому что ',
+        h('span.mono', 'llm.backend'), ' = ', h('span.mono', 'echo'), '.',
+        h('div', { style: 'margin-top:7px' },
+          'Для ответов: ', h('span.mono', 'llm.backend: llamacpp'), ' в ',
+          h('span.mono', 'config/default.yaml'), ' (или ', h('span.mono', 'LAWRAG_LLM_BACKEND=llamacpp'),
+          ') и запущенный генератор — ', h('span.mono', 'docker compose --profile llm up -d llm'), '.'))));
   }
 
   if (a.verification_problems && a.verification_problems.length) {
@@ -567,7 +647,9 @@ function renderAnswer(out) {
         h('div.idx', `[${i + 1}]`),
         h('div',
           h('div.head',
-            h('span.pin', pin || 'без привязки'),
+            cit.act_code && cit.article
+              ? h('a.pin', { href: corpusHref(`${cit.act_code}/st${cit.article}`, { as_of: a.as_of }), title: 'Открыть в корпусе' }, pin)
+              : h('span.pin', pin || 'без привязки'),
             cit.source ? chip(`источник ${cit.source}`, null, { mono: true }) : null),
           cit.quote ? h('blockquote', `«${cit.quote}»`) : h('div.dim', 'цитата не приведена'))));
     });
@@ -596,7 +678,8 @@ function sourceRow(s) {
           // Three sources from one article differ only by their point, and a
           // repeated heading with nothing to tell them apart reads like a bug.
           pointLabel(s) ? h('span.dim', { style: 'font-weight:400' }, ` · ${pointLabel(s)}`) : null),
-        h('div.p', `${s.node_id}${s.act_code ? ' · ' + s.act_code : ''} · ${(s.lang || '').toUpperCase()} · ${shortDate(s.valid_from)} — ${shortDate(s.valid_to)}`)),
+        h('div.p', corpusLink(s.node_id, { lang: s.lang, as_of: s.valid_from }),
+          `${s.act_code ? ' · ' + s.act_code : ''} · ${(s.lang || '').toUpperCase()} · ${shortDate(s.valid_from)} — ${shortDate(s.valid_to)}`)),
       h('div.meta',
         (s.provenance || []).map((p) => chip(p, null, { mono: true })),
         validityChip(s))),
@@ -625,12 +708,14 @@ function viewSearch(root) {
   const c = composer({
     placeholder: 'Запрос к поиску — без генерации ответа…',
     submitLabel: 'Найти',
+    examples: state.search.result ? [] : SEARCH_EXAMPLES,
     state: state.search,
     onSubmit: async (req) => {
       c.setBusy(true);
       out.replaceChildren(loading('Плотный + лексический поиск, слияние рангов…'));
       try {
         state.search.result = await core('/search', { method: 'POST', body: { ...req, include_packet: true } });
+        state.search.result.question = req.question;
         state.search.error = null;
       } catch (err) { state.search.result = null; state.search.error = err; }
       c.setBusy(false);
@@ -680,11 +765,13 @@ function renderSearch(out) {
     const row = h('div.hit',
       h('div.top',
         h('span.rank', String(i + 1).padStart(2, '0')),
-        h('span.title', hit.heading || hit.node_id),
+        h('span.title', hit.heading || hit.node_id,
+          pointLabel(hit) ? h('span.dim', { style: 'font-weight:400' }, ` · ${pointLabel(hit)}`) : null),
         validityChip(hit),
         ...(hit.provenance || []).map((p) => chip(p, null, { mono: true }))),
-      h('div.path', `${hit.act_title || hit.act_code} · ${hit.hierarchy_path || '—'} · `, h('span.mono', hit.chunk_id)),
-      h('div.body', hit.text || ''));
+      h('div.path', `${hit.act_title || hit.act_code} · ${hit.hierarchy_path || '—'} · `,
+        corpusLink(hit.node_id, { lang: hit.lang, as_of: hit.valid_from }, hit.chunk_id)),
+      h('div.body', highlight(hit.text || '', r.question || state.search.question)));
     // Statutory text is long by nature; clamped by default so eight hits stay
     // comparable on one screen, expandable because the wording is the evidence.
     const more = h('button.more', { type: 'button', onclick: () => {
@@ -729,6 +816,11 @@ async function viewCorpus(root) {
   } catch (err) { left.replaceChildren(errorBox(err)); return; }
 
   const acts = state.corpus.acts;
+  const target = corpusTarget();
+  if (target) {
+    if (target.lang) state.corpus.lang = target.lang;
+    state.corpus.as_of = target.as_of || '';
+  }
   left.replaceChildren(h('header', h('div.eyebrow', `Акты — ${acts.length}`),
     h('span.dim', { style: 'font-size:11.5px' }, 'по юридической силе')));
   if (!acts.length) {
@@ -752,11 +844,12 @@ async function viewCorpus(root) {
         h('span', (act.langs || []).join('/'))));
     body.append(btn);
   }
-  body.firstChild.classList.add('on');
-  openAct(acts[0], right);
+  const first = (target && acts.find((a) => a.code === target.act)) || acts[0];
+  body.children[acts.indexOf(first)].classList.add('on');
+  openAct(first, right, target && target.act === first.code ? target.article : null);
 }
 
-async function openAct(act, right) {
+async function openAct(act, right, focusArticle = null) {
   state.corpus.act = act;
   const head = h('div', { style: 'margin-bottom:18px' },
     eyebrow(`${ACT_KIND[act.kind] || act.kind} · ранг ${act.norm_rank}`),
@@ -875,6 +968,18 @@ async function openAct(act, right) {
     filter,
     toc);
   render('');
+
+  // Arrived by link from a hit, a source or a citation: show that article,
+  // with the table of contents narrowed to it so the chapter it sits in is open.
+  if (focusArticle) {
+    const node = groups.flatMap((g) => g.items).find((x) => x.id === focusArticle);
+    if (node) {
+      selected = node.id;
+      filter.value = node.number || '';
+      render(filter.value);
+    }
+    openNode(focusArticle, detail);
+  }
 }
 
 async function openNode(nodeId, detail) {
@@ -1027,19 +1132,20 @@ function viewIngest(root) {
             h('p', 'Импорт выполняется по одному за раз: сброс схемы во время параллельного импорта повредил бы корпус.'),
             h('p', { style: 'margin-bottom:0' }, 'Пакет без ', h('span.mono', 'manifest.json'),
               ' будет импортирован, но манифест посчитается локально — это не то же самое, что подпись, сделанная на подключённой стороне.'))),
-        h('div', { style: 'margin-top:18px' }, jobHistory()))));
+        h('div', { style: 'margin-top:18px' },
+          jobHistory((id) => { pollJob(id, jobBox, () => {}); jobBox.scrollIntoView({ block: 'nearest' }); })))));
 
   renderFiles();
 }
 
-function jobHistory() {
+function jobHistory(onOpen) {
   const box = h('div.card', h('header', h('div.eyebrow', 'История импортов')), h('div.body', loading()));
   api('/ingest/jobs').then((jobs) => {
     const body = box.lastChild;
     if (!jobs.length) { body.replaceChildren(h('div.dim', { style: 'font-size:12.5px' }, 'Импортов через консоль ещё не было.')); return; }
     body.replaceChildren(h('table.grid',
       h('thead', h('tr', h('th', 'Задача'), h('th', 'Файлы'), h('th', 'Статус'), h('th.r', 'Начало'))),
-      h('tbody', jobs.map((j) => h('tr',
+      h('tbody', jobs.map((j) => h('tr.clickable', { onclick: () => onOpen && onOpen(j.id), title: 'Показать журнал импорта' },
         h('td', h('span.mono', j.id)),
         h('td', String(j.files.length)),
         h('td', j.status === 'done' ? chip('готово', 'ok') : j.status === 'failed' ? chip('ошибка', 'bad')
@@ -1061,7 +1167,8 @@ function pollJob(jobId, box, done) {
     box.replaceChildren(
       h('div', { style: 'display:flex;align-items:center;gap:10px;margin-bottom:12px' },
         eyebrow('Импорт'), h('span.mono', job.id),
-        chip(job.status === 'running' ? 'выполняется' : job.status === 'done' ? 'готово' : 'ошибка', tone),
+        chip(job.status === 'running' ? 'выполняется' : job.status === 'done' ? 'готово'
+          : job.status === 'interrupted' ? 'прерван' : 'ошибка', tone),
         job.status === 'running' ? h('span.spinner') : null),
       job.totals && Object.keys(job.totals).length
         ? h('div.stat-row', { style: 'margin-bottom:12px' },
@@ -1130,9 +1237,9 @@ async function viewMonitor(root) {
         h('span.mono', rt.llm.base_url || rt.llm_base_url || '—'),
         ' нет соединения.',
         h('div', { style: 'margin-top:7px' },
-          'Запустите llama-server: ', h('span.mono', 'scripts\\serve_llm.ps1'),
-          ' (профиль B по умолчанию). Если ', h('span.mono', 'llama-server'),
-          ' не в PATH — сначала ', h('span.mono', '$env:LLAMA_SERVER = "…\\llama-server.exe"'), '.'),
+          'Запустите генератор из каталога ', h('span.mono', 'docker/'), ': ',
+          h('span.mono', 'docker compose --profile llm up -d llm'),
+          ' (профиль B по умолчанию; A/B — ', h('span.mono', 'docker/scripts/serve_llm.*'), ').'),
         rt.llm.error ? h('div', { style: 'margin-top:5px' },
           h('span.dim', rt.llm.error)) : null)));
   } else {
@@ -1354,13 +1461,16 @@ async function openQuery(id) {
       ? (row.cited || []).map((c, i) => h('div.citation',
         h('div.idx', `[${i + 1}]`),
         h('div',
-          h('div.head', h('span.pin', [c.act_code, c.article && `ст. ${c.article}`, c.point && `п. ${c.point}`].filter(Boolean).join(' · ') || '—')),
+          h('div.head', c.act_code && c.article
+            ? h('a.pin', { href: corpusHref(`${c.act_code}/st${c.article}`, { as_of: row.as_of }), onclick: close },
+              [c.act_code, `ст. ${c.article}`, c.point && `п. ${c.point}`].filter(Boolean).join(' · '))
+            : h('span.pin', [c.act_code, c.article && `ст. ${c.article}`, c.point && `п. ${c.point}`].filter(Boolean).join(' · ') || '—')),
           c.quote ? h('blockquote', `«${c.quote}»`) : null)))
       : h('div.dim', 'Ни одной ссылки — ответ был понижен до перечня норм.')),
     h('hr.rule'),
     eyebrow(`Найдено фрагментов — ${(row.retrieved || []).length}`),
     h('div', { style: 'margin-top:10px;display:flex;flex-wrap:wrap;gap:6px' },
-      (row.retrieved || []).map((cid) => chip(cid, null, { mono: true }))));
+      (row.retrieved || []).map((cid) => chunkLink(cid))));
 }
 
 function unresolvedCard(rows, live = true) {

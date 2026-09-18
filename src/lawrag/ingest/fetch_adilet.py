@@ -145,6 +145,30 @@ def _is_redaction_as_of(html: str, as_of: date) -> bool:
     return True
 
 
+_SHELL_MARKERS = ("включите JavaScript", "JavaScript қосыңыз", "enable JavaScript")
+
+
+def is_app_shell(html: str) -> bool:
+    """True for the page adilet serves to clients that do not run JavaScript.
+
+    Since September 2026 the act routes return a small shell with the act's
+    title and a note that the full text is deliberately absent for such
+    clients (its robots policy closes the site to corpus-collecting crawlers
+    and keeps it open to search and citation). Before this check the fetcher
+    saved that shell as the document and reported success, and the next
+    ingest parsed a code with zero articles.
+    """
+    lowered = html.lower()
+    if any(m.lower() in lowered for m in _SHELL_MARKERS):
+        return True
+    from . import structure as S
+    from .parser import adilet_html_to_lines
+
+    lines = adilet_html_to_lines(html)
+    lang = S.detect_lang("\n".join(lines))
+    return not any(S.match_heading(line, lang) for line in lines)
+
+
 def fetch(plans: list[FetchPlan], out_dir: Path, delay_s: float = DEFAULT_DELAY_S,
           timeout_s: float = 60.0, ca_bundle: str | None = None,
           insecure: bool = False) -> list[Path]:
@@ -177,6 +201,13 @@ def fetch(plans: list[FetchPlan], out_dir: Path, delay_s: float = DEFAULT_DELAY_
                         "(or LAWRAG_CA_BUNDLE); failing that, pass --insecure to skip "
                         "verification (last resort, trusted network only)."
                     )
+                continue
+            if is_app_shell(resp.text):
+                log.error(
+                    "%s: adilet returned its JavaScript shell, not the act. The site now "
+                    "withholds act text from non-browser clients on purpose; obtain the "
+                    "text from the reference bank export (--source-dir) instead. Not saved.",
+                    plan.url)
                 continue
             if plan.as_of and not _is_redaction_as_of(resp.text, plan.as_of):
                 log.error(

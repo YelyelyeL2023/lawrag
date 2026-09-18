@@ -313,3 +313,17 @@ def test_malformed_iso_date_does_not_crash_the_request(live_db):
     engine = RetrievalEngine(live_db)
     result = engine.retrieve("Что действовало на 2025-02-30?")
     assert result.analysis.as_of == date.today()
+
+
+def test_non_finite_embedding_is_refused_by_name():
+    # fp16 inference of the fine-tuned bge-m3 overflowed on a KoAP chunk during
+    # ingest; Postgres answered "NaN not allowed in vector" for parameter $4,
+    # naming nothing. The indexer now checks first and names the chunk.
+    import numpy as np
+    import pytest
+
+    from lawrag.index.indexer import check_finite
+
+    check_finite("koap/st1#ru@2026-01-01", np.zeros(4, dtype=np.float32))
+    with pytest.raises(ValueError, match="koap/st278/p2#ru@2026-01-01"):
+        check_finite("koap/st278/p2#ru@2026-01-01", np.array([0.1, float("nan"), 0.2]))

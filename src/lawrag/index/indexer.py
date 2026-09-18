@@ -16,6 +16,8 @@ skeleton. No similarity matching, no drift.
 
 from __future__ import annotations
 
+import numpy as np
+
 from datetime import date, timedelta
 from typing import Iterable, Sequence
 
@@ -29,6 +31,16 @@ from .embed import Embedder
 log = get_logger(__name__)
 
 BATCH = 200
+
+
+def check_finite(chunk_id: str, vec) -> None:
+    """A NaN reaching Postgres fails the whole batch with a message that names
+    no chunk; fail here, naming it, before the transaction is opened."""
+    arr = np.asarray(vec, dtype=np.float32)
+    if not np.isfinite(arr).all():
+        raise ValueError(f"embedding for chunk {chunk_id} is not finite "
+                         f"({int((~np.isfinite(arr)).sum())} bad component(s)); "
+                         "the embedder overflowed — see embed.py's fp32 fallback")
 
 
 def _vec_literal(vec) -> str:
@@ -272,6 +284,8 @@ class Indexer:
         for start in range(0, len(chunks), BATCH):
             window = chunks[start:start + BATCH]
             vectors = self.embedder.encode([c.embed_text for c in window])
+            for chunk, vec in zip(window, vectors):
+                check_finite(chunk.id, vec)
             with self.db.connect() as conn, conn.cursor() as cur:
                 for chunk, vec in zip(window, vectors):
                     cur.execute(

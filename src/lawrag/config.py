@@ -45,6 +45,10 @@ def _load_dotenv(path: Path | None = None) -> None:
 class DBConfig:
     dsn: str = "postgresql://localhost:5432/lawrag"
     statement_timeout_ms: int = 30_000
+    # libpq has no connect timeout by default. Without one, /health and the
+    # console's status view hang for minutes against an unreachable Postgres
+    # instead of reporting it — the opposite of "degraded state is data".
+    connect_timeout_s: int = 5
 
 
 @dataclass

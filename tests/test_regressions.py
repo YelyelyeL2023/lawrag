@@ -18,7 +18,7 @@ from lawrag.index.db import Database
 from lawrag.models import Lang
 from lawrag.verify.citations import CitationVerifier
 
-SAMPLE = Path(__file__).resolve().parents[1] / "data" / "sample"
+SAMPLE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "synthetic"
 
 HEADER = """---
 code: {code}

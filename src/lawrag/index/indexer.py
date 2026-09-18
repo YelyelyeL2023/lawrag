@@ -84,6 +84,22 @@ class Indexer:
         # than by their position in the hierarchy.
         nodes = list(root.walk())
         with self.db.connect() as conn, conn.cursor() as cur:
+            # Both languages share one structural skeleton. If this text puts
+            # articles under different containers than the other language did,
+            # the last import silently wins and the other language's table of
+            # contents loses its chapters — so say so.
+            cur.execute("SELECT id, parent_id FROM node WHERE act_code = %s", (root.act_code,))
+            stored = {r["id"]: r["parent_id"] for r in cur.fetchall()}
+            moved = [n.id for n in nodes
+                     if n.kind is NodeKind.ARTICLE and n.id in stored
+                     and stored[n.id] != n.parent_id]
+            if moved:
+                log.warning(
+                    "%s [%s]: %d articles sit under different sections/chapters than in the "
+                    "text imported before (e.g. %s: %s -> %s). The heading structure of the "
+                    "two languages disagrees; check the section headings of this document.",
+                    root.act_code, lang.value, len(moved), moved[0], stored[moved[0]],
+                    next(n.parent_id for n in nodes if n.id == moved[0]))
             for node in nodes:
                 cur.execute(
                     """
@@ -161,7 +177,8 @@ class Indexer:
             return declared_valid_to
         return min(declared_valid_to, next_from - timedelta(days=1))
 
-    def close_dropped(self, act_code: str, lang: Lang, snapshot_from: date) -> int:
+    def close_dropped(self, act_code: str, lang: Lang, snapshot_from: date,
+                      keep: set[str] | None = None) -> int:
         """Close norms the new snapshot no longer contains.
 
         A repealed article simply *disappears* from the next snapshot. Nothing
@@ -169,6 +186,10 @@ class Indexer:
         stays open-ended and keeps answering as current law forever — the exact
         failure the as-of filter exists to prevent.
         """
+        # A long article is chunked as "koap/st5", "koap/st5~1", ...; the
+        # continuation ids are not rows in ``node``, so they are matched by the
+        # node id before the "~". Without that, the tail of a repealed article
+        # stayed open-ended and kept answering as current law.
         cutoff = snapshot_from - timedelta(days=1)
         closed = 0
         with self.db.connect() as conn, conn.cursor() as cur:
@@ -179,10 +200,12 @@ class Indexer:
                      WHERE lang = %(lang)s
                        AND valid_to > %(cutoff)s
                        AND valid_from < %(vf)s
-                       AND node_id IN (SELECT id FROM node WHERE act_code = %(act)s)
+                       AND split_part(node_id, '~', 1) IN
+                           (SELECT id FROM node WHERE act_code = %(act)s)
+                       AND NOT (split_part(node_id, '~', 1) = ANY(%(keep)s))
                     """,
                     {"cutoff": cutoff, "lang": lang.value, "vf": snapshot_from,
-                     "act": act_code},
+                     "act": act_code, "keep": sorted(keep or ())},
                 )
                 closed += cur.rowcount
         if closed:
@@ -194,6 +217,12 @@ class Indexer:
     def index_chunks(self, chunks: Sequence[Chunk], release_id: str) -> int:
         if not chunks:
             return 0
+        seen: set[str] = set()
+        dupes = [c.id for c in chunks if c.id in seen or seen.add(c.id)]
+        if dupes:
+            # Same id twice means the second silently overwrites the first.
+            log.warning("%d chunks share an id with an earlier chunk and overwrite it "
+                        "(e.g. %s) — a parsing problem in the source", len(dupes), dupes[0])
         with self.db.connect() as conn, conn.cursor() as cur:
             for chunk in chunks:
                 cur.execute(
@@ -331,26 +360,26 @@ class Indexer:
         """terms: (term, definition, act_code, node_id, valid_from, valid_to)."""
         if not terms:
             return 0
+        # Scoped per node and redaction. Articles are dated individually, so one
+        # act's definitions span many start dates; scoping the whole batch by
+        # the earliest of them left every other article's terms undeleted, and
+        # re-importing the same snapshot duplicated them.
+        redactions = sorted({(t[3], t[4]) for t in terms})
         with self.db.connect() as conn, conn.cursor() as cur:
-            node_ids = sorted({t[3] for t in terms})
-            valid_from = min(t[4] for t in terms)
-            # Scoped to this redaction. An unscoped delete destroys the historic
-            # definitions, and hydration for an as-of date in that period then
-            # silently attaches nothing.
-            cur.execute(
-                "DELETE FROM term WHERE lang = %s AND node_id = ANY(%s) "
-                "  AND valid_from = %s",
-                (lang.value, node_ids, valid_from),
-            )
-            cur.execute(
-                """
-                UPDATE term SET valid_to = %s
-                 WHERE lang = %s AND node_id = ANY(%s)
-                   AND valid_from < %s AND valid_to > %s
-                """,
-                (valid_from - timedelta(days=1), lang.value, node_ids,
-                 valid_from, valid_from - timedelta(days=1)),
-            )
+            for node_id, valid_from in redactions:
+                cur.execute(
+                    "DELETE FROM term WHERE lang = %s AND node_id = %s AND valid_from = %s",
+                    (lang.value, node_id, valid_from),
+                )
+                cur.execute(
+                    """
+                    UPDATE term SET valid_to = %s
+                     WHERE lang = %s AND node_id = %s
+                       AND valid_from < %s AND valid_to > %s
+                    """,
+                    (valid_from - timedelta(days=1), lang.value, node_id,
+                     valid_from, valid_from - timedelta(days=1)),
+                )
             for term, definition, act_code, node_id, vf, vt in terms:
                 cur.execute(
                     """

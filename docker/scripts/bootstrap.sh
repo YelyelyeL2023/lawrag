@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stand up a working system on the sample corpus, from nothing.
+# Stand up a working system on the adilet snapshot in data/adilet, from nothing.
 #
 # The only thing this needs on the host is Docker. No Python, no virtualenv,
 # no pip install -e: every command below runs inside the lawrag image.
@@ -20,14 +20,11 @@ echo "==> building the lawrag image"
 echo "==> starting Postgres"
 "${COMPOSE[@]}" up -d --wait db
 
-echo "==> ingesting the SYNTHETIC sample corpus"
-"${COMPOSE[@]}" run --rm cli ingest data/sample --reset --no-verify
+echo "==> ingesting the adilet snapshot (data/adilet)"
+"${COMPOSE[@]}" run --rm cli ingest data/adilet --reset --no-verify
 
 echo "==> corpus"
 "${COMPOSE[@]}" run --rm cli stats
-
-echo "==> retrieval eval"
-"${COMPOSE[@]}" run --rm cli eval
 
 echo "==> starting the API and console"
 "${COMPOSE[@]}" up -d app
@@ -43,4 +40,9 @@ Ready.  Console: http://127.0.0.1:8000/   API docs: http://127.0.0.1:8000/docs
 `ask` needs the generator running and the weights mounted:
 
     docker compose --profile llm up -d llm      (see README, "Models")
+
+`cli eval` runs src/lawrag/evalkit/questions.sample.yaml, which is written
+against the synthetic test fixture, not this corpus. Write a question set for
+data/adilet before reading anything into its numbers; the test suite
+(docker compose run --rm tests) exercises the fixture set.
 MSG

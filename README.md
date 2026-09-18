@@ -7,9 +7,12 @@ machine.
 Everything runs locally. The corpus arrives as signed offline snapshot bundles;
 no query-path code makes an outbound network call.
 
-> **The sample corpus in `data/sample/` is invented.** It exists so the pipeline
-> runs on a clean clone. Replace it with real snapshots from the Эталонный
-> контрольный банк НПА before answering anything to anyone.
+> **Two corpora, kept apart.** `data/adilet/` is a real snapshot of adilet.zan.kz
+> (fetched 2026-09-08). `tests/fixtures/synthetic/` is an **invented** fixture the
+> test suite runs on. They used to share `data/sample/`, where the fixture's
+> "статья 278 КоАП" closed the real article 278 and answered as current law;
+> `ingest` now refuses a directory that holds two different documents under one
+> act code.
 
 ---
 
@@ -31,15 +34,15 @@ in a container.
 cd docker
 docker compose build app
 docker compose up -d --wait db                                   # Postgres 16 + pgvector
-docker compose run --rm cli ingest data/sample --reset --no-verify
+docker compose run --rm cli ingest data/adilet --reset --no-verify
 docker compose run --rm cli stats
-docker compose run --rm cli eval
 docker compose up -d app                                         # API + console on :8000
 ```
 
 ```bash
 docker compose run --rm cli search "В какой срок нужно встать на регистрационный учет?"
 docker compose run --rm cli search "Какой штраф за просрочку?" --as-of 2025-03-15   # point-in-time
+docker compose run --rm cli calibrate                            # relevance floor for this model
 docker compose run --rm cli search "Тіркеу есебіне қою мерзімі қандай?"             # Kazakh
 docker compose run --rm cli ask    "Продлевается ли срок для малого бизнеса?"
 docker compose run --rm tests                                    # the test suite
@@ -101,6 +104,11 @@ overrides it, spelled `LAWRAG_<SECTION>_<FIELD>` — `LAWRAG_DB_DSN`,
 local-development defaults and no container hostnames or paths;
 `docker/docker-compose.yml` sets exactly those variables for the containers.
 
+`config/local.yaml` is the same pipeline on the placeholder models, for running
+`lawrag` from a host interpreter against the compose database:
+`LAWRAG_CONFIG=config/local.yaml lawrag stats`. The test suite pins the same
+placeholders.
+
 ---
 
 ## Console
@@ -125,6 +133,21 @@ console. Upload is JSON-with-text rather than multipart so that no extra wheel
 The extra endpoints live in `api/console.py` under `/api`, and every one of them
 is read-only except `POST /api/ingest`. `api/main.py` is unchanged in substance:
 delete `api/static/` and the API is exactly what it was.
+
+### Access
+
+| setting | effect |
+| --- | --- |
+| `LAWRAG_API_TOKEN` | when set, every request except `/health` and the console's static files needs `Authorization: Bearer <token>`; the console asks for it once per tab |
+| neither set | `POST /api/ingest` (which can drop the schema) is accepted only from a loopback client; everything else is open |
+| `LAWRAG_ALLOW_REMOTE_WRITES=1` | lifts the loopback rule without a token. Compose sets it, because the port is published on the host's `127.0.0.1` but requests reach the container from the Docker bridge |
+
+`lawrag serve --host 0.0.0.0` without a token prints a warning.
+
+Import history is written to `data/uploads/<job>/job.json`, next to the staged
+files, so it survives a restart (not the database: an import with `reset` would
+delete the record of itself). A job that was running when the server stopped is
+shown as interrupted.
 
 Degraded state is rendered rather than hidden. Placeholder backends raise a
 banner on every view, an unreachable database is reported as such instead of an
@@ -277,7 +300,30 @@ Two known weak points, stated rather than hidden:
   `min_dense_score` is a cosine and **must be re-tuned** when you switch from
   the hash placeholder to BGE-M3; `min_lexical_score` is a `ts_rank_cd` value
   that depends on the corpus, not the model; `min_trigram_score` is a
-  `word_similarity` on 0..1. The config says so where they are set.
+  `word_similarity` on 0..1. `lawrag calibrate` measures them: it runs the
+  question set with the floor off and proposes each threshold in the gap between
+  the weakest answerable question and the strongest out-of-corpus one — or says
+  that a signal cannot separate them.
+
+### Redaction dates
+
+adilet serves the current text, and records every change in a footnote under the
+article it touched ("Сноска. Статья 8 с изменениями, внесенными законами РК от
+05.11.2022 № 158-VII (вводится в действие с 01.01.2023); …"). `ingest/dating.py`
+reads those: an article starts on the commencement date of its latest
+amendment, and an unamended article on the act's adoption date from the page
+header. Commencement stated relative to publication ("по истечении десяти
+календарных дней…") is resolved from the signing date and logged as approximate.
+Publisher's notes ("Примечание ИЗПИ!") announce amendments not yet applied; they
+are set aside, never attached as an operative note, and never used as a date.
+
+This dates the text in the corpus; it does not recreate earlier wording. A
+question about a date before an article's last amendment finds no text for it,
+and the system says so (`cited_text_not_in_force_on_date`) rather than quoting
+today's wording as if it had applied then. For history, fetch a snapshot per date
+(`lawrag fetch <dir> --as-of YYYY-MM-DD`) and ingest each; a page that cites an
+amending law signed after the requested date is rejected, since that means the
+server ignored the date.
 
 ---
 
@@ -321,8 +367,9 @@ A machine with no weights at all can still run everything except `ask`: set
 `LAWRAG_TARGET=runtime`, and retrieval stays fully functional. `GET /health`
 reports `production_ready: false` in that state.
 
-After switching, re-tune `retrieval.min_dense_score` / `min_lexical_score` and
-re-run `docker compose run --rm cli eval`.
+After switching, run `docker compose run --rm cli calibrate`, put the proposed
+`retrieval.min_*` values in `config/default.yaml`, and re-run
+`docker compose run --rm cli eval`.
 
 ### Kazakh answers
 
@@ -343,6 +390,12 @@ docker compose run --rm cli eval src/lawrag/evalkit/questions.sample.yaml
 Measures whether the correct **set** of articles reached the model, not whether
 the top-1 vector hit was right — legal answers routinely span a penalty article,
 a definition in another code, and an exception referring out to a third.
+
+The shipped question set is written against the **synthetic fixture** in
+`tests/fixtures/synthetic/`, which is what `docker compose run --rm tests`
+ingests; the numbers below come from it. Run against `data/adilet` it measures
+nothing, because its article ids name invented texts. Write a question set for
+the real corpus before reading anything into `eval` on it.
 
 ```
 recall@chunk  0.86
@@ -399,6 +452,7 @@ src/lawrag/
   models.py                 canonical legal document model, norm hierarchy
   ingest/
     fetch_adilet.py         connected-side snapshot fetcher
+    dating.py               redaction dates from amendment footnotes
     bundle.py               manifest, verification, the air-gap boundary
     structure.py            RU/KK heading dialects, notes vs amendments
     parser.py               source text and adilet HTML -> tree
@@ -416,12 +470,16 @@ src/lawrag/
     llm.py prompts.py answer.py
   verify/citations.py       mechanical citation checking
   evalkit/harness.py        retrieval eval
+  evalkit/calibrate.py      relevance-floor calibration
   api/
     main.py                 the CLI-mirroring HTTP surface
     console.py              read-only endpoints for the browser console
+    security.py             token / loopback access control
     static/                 the console itself: no build step, no CDN
   cli.py
-tests/                      66 tests; DB-backed ones skip without Postgres
+data/adilet/                real adilet snapshot (HTML + documents.json)
+tests/                      96 tests; DB-backed ones skip without Postgres
+  fixtures/synthetic/       the invented fixture the suite ingests
   test_regressions.py       one test per defect found in review, each named
                             after the failure it pins down
 ```

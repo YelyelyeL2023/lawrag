@@ -1,11 +1,15 @@
-# Local macOS run: placeholder models, no weights on disk, no CUDA.
+# Host-interpreter run on placeholder models: no weights on disk, no CUDA.
 #
-# config/default.yaml is tuned for the production Windows workstation
-# (bge-m3 on CUDA, llama-server, D:/models/...). None of that exists here, so
-# this file runs the pipeline on the deterministic hash embedder and the echo
-# LLM. Retrieval is fully functional; `ask` abstains with no_model_loaded.
+# config/default.yaml names the production backends (bge-m3, the bge reranker,
+# llama-server). This file runs the same pipeline from a host Python against
+# the compose database (published on 127.0.0.1:5433) on the deterministic hash
+# embedder and the echo LLM. Retrieval is fully functional; `ask` abstains with
+# no_model_loaded. The test suite pins the same placeholders.
 #
 # Use it with:  LAWRAG_CONFIG=config/local.yaml lawrag <command>
+#
+# The DSN below is the compose default from docker/.env.example, not a secret;
+# set LAWRAG_DB_DSN to point anywhere else.
 
 db:
   dsn: postgresql://postgres:2006@localhost:5433/lawrag

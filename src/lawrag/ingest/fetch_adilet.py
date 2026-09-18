@@ -37,6 +37,7 @@ class FetchPlan:
     lang: str
     url: str
     filename: str
+    as_of: date | None = None
 
 
 def build_plan(codes: list[str] | None = None, langs: tuple[str, ...] = ("ru", "kk"),
@@ -60,7 +61,7 @@ def build_plan(codes: list[str] | None = None, langs: tuple[str, ...] = ("ru", "
             if as_of:
                 # adilet serves point-in-time redactions from the same path.
                 url = f"{url}?ysclid=&date={as_of.isoformat()}"
-            plans.append(FetchPlan(spec, lang, url, f"{spec.code}.{lang}.html"))
+            plans.append(FetchPlan(spec, lang, url, f"{spec.code}.{lang}.html", as_of))
     return plans
 
 
@@ -123,6 +124,27 @@ def _is_cert_error(exc: BaseException) -> bool:
     return False
 
 
+def _is_redaction_as_of(html: str, as_of: date) -> bool:
+    """Check that a point-in-time page really is that point in time.
+
+    A redaction in force on a date cannot cite an amending law *signed* after
+    that date. Commencement dates are no use for this check: a current page
+    legitimately cites laws already adopted that commence next year. This is
+    the only evidence available that the server honoured the date parameter
+    rather than quietly returning today's text under a historic label.
+    """
+    from . import structure as S
+    from .dating import parse_amendments
+    from .parser import adilet_html_to_lines
+
+    for line in adilet_html_to_lines(html):
+        if not S.is_footnote_line(line):
+            continue
+        if any(a.law_date > as_of for a in parse_amendments(line)):
+            return False
+    return True
+
+
 def fetch(plans: list[FetchPlan], out_dir: Path, delay_s: float = DEFAULT_DELAY_S,
           timeout_s: float = 60.0, ca_bundle: str | None = None,
           insecure: bool = False) -> list[Path]:
@@ -156,6 +178,12 @@ def fetch(plans: list[FetchPlan], out_dir: Path, delay_s: float = DEFAULT_DELAY_
                         "verification (last resort, trusted network only)."
                     )
                 continue
+            if plan.as_of and not _is_redaction_as_of(resp.text, plan.as_of):
+                log.error(
+                    "%s: adilet returned a text amended after %s — the date parameter was "
+                    "not honoured, so this is not the redaction asked for. Not saved.",
+                    plan.url, plan.as_of)
+                continue
             path = out_dir / plan.filename
             path.write_text(resp.text, encoding="utf-8")
             written.append(path)
@@ -168,11 +196,28 @@ def fetch(plans: list[FetchPlan], out_dir: Path, delay_s: float = DEFAULT_DELAY_
                 "title": plan.act.title_ru if plan.lang == "ru" else plan.act.title_kk,
                 "url": plan.url,
                 "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                # The day this text is known to be in force. The parser dates
+                # each article from its footnotes and never past this day.
+                **({"as_of": plan.as_of.isoformat()} if plan.as_of else {}),
             })
             time.sleep(delay_s)
 
-    (out_dir / "documents.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    # Merge into an existing index rather than replacing it. Re-fetching one
+    # code into data/adilet used to rewrite documents.json with that code only,
+    # and the next ingest silently dropped every other act in the directory.
+    index_path = out_dir / "documents.json"
+    merged: dict[str, dict] = {}
+    if index_path.exists():
+        try:
+            for entry in json.loads(index_path.read_text(encoding="utf-8")):
+                if (out_dir / entry["file"]).exists():
+                    merged[entry["file"]] = entry
+        except (ValueError, KeyError, TypeError) as exc:
+            log.warning("existing %s is unreadable (%s); rewriting it", index_path, exc)
+    for entry in meta:
+        merged[entry["file"]] = entry
+    index_path.write_text(
+        json.dumps(list(merged.values()), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     log.info("fetched %d/%d documents into %s", len(written), len(plans), out_dir)
     return written

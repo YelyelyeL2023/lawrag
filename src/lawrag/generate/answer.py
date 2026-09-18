@@ -38,6 +38,8 @@ class Answer:
     verification: str = ""
     verification_problems: list[str] = field(default_factory=list)
     uses_superseded_text: bool = False
+    # Named articles with no text on the as-of date: [{node_id, earliest, latest}]
+    unavailable_citations: list[dict] = field(default_factory=list)
     disclaimer: str = ""
     timings_ms: dict = field(default_factory=dict)
 
@@ -88,7 +90,29 @@ class AnswerService:
             sources=result.packet.sources,
             disclaimer=prompts.DISCLAIMER[qlang],
             timings_ms=dict(result.timings_ms),
+            unavailable_citations=[
+                {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in u.items()}
+                for u in result.unavailable_citations
+            ],
         )
+
+        # The question named articles, and none of them has text on the date.
+        # Answering from whatever similar provisions came back would put a
+        # different article's rule in place of the one the user asked about.
+        def is_named(node_id: str) -> bool:
+            return any(node_id == f"{a}/st{n}" if a else node_id.endswith(f"/st{n}")
+                       for a, n in result.analysis.article_hints)
+
+        if (result.analysis.is_citation_lookup and answer.unavailable_citations
+                and not any(is_named(h.article_node_id) for h in result.hits)):
+            answer.abstained = True
+            answer.abstain_reason = "cited_text_not_in_force_on_date"
+            answer.escalate = True
+            answer.text = prompts.no_text_on_date(qlang, result.analysis.as_of,
+                                                  answer.unavailable_citations)
+            answer.sources = []
+            self._finish(answer, result, started, log_query)
+            return answer
 
         if not result.packet.sources:
             answer.abstained = True

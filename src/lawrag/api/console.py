@@ -38,6 +38,7 @@ from pydantic import BaseModel, Field
 from ..config import Config
 from ..index.db import Database
 from ..logging_setup import get_logger
+from . import security
 
 log = get_logger(__name__)
 
@@ -215,6 +216,7 @@ def stats() -> dict:
         # Named, not inferred, so the UI never has to guess why a banner is up.
         "placeholder_embedding": c.embedding.backend == "hash",
         "placeholder_llm": c.llm.backend in ("echo", "none", ""),
+        "access": security.describe(),
     }
     runtime["configured_for_production"] = not (
         runtime["placeholder_embedding"] or runtime["placeholder_llm"]
@@ -255,12 +257,15 @@ def stats() -> dict:
         """SELECT count(*) AS n FROM chunk c
             WHERE NOT EXISTS (SELECT 1 FROM chunk_embedding e WHERE e.chunk_id = c.id)"""
     )
-    # Are there real redaction dates in here at all? parser.py falls back to
-    # 1900-01-01 when a source carries no valid_from, and fetch_adilet.py does
-    # not write one — so a corpus can import cleanly and still be undated, at
-    # which point every point-in-time feature in this system silently answers
-    # "as it has always been". That is exactly the kind of thing the corpus must
-    # confess to rather than let an operator discover from a suspicious date.
+    # Are there real redaction dates in here at all? adilet snapshots are dated
+    # per article from their amendment footnotes (ingest/dating.py), but a text
+    # with no footnote and no known adoption date — or a corpus imported before
+    # that existed — still sits on the parser's 1900-01-01 fallback, and every
+    # point-in-time feature then silently answers "as it has always been".
+    #
+    # ``closed`` separately says whether any *earlier* redaction is stored. A
+    # corpus of current snapshots only is dated but has no history: an as-of
+    # question before an article's last amendment finds no text for it.
     dating = _rows(
         """SELECT count(*) AS total,
                   count(*) FILTER (WHERE valid_from = DATE '1900-01-01') AS undated,
@@ -519,7 +524,7 @@ class Job:
     started_at: str
     files: list[str]
     options: dict
-    status: str = "running"          # running | done | failed
+    status: str = "running"          # running | done | failed | interrupted
     log: list[str] = field(default_factory=list)
     totals: dict = field(default_factory=dict)
     error: str = ""
@@ -536,6 +541,82 @@ class Job:
 
 _jobs: dict[str, Job] = {}
 _jobs_lock = threading.Lock()
+_jobs_loaded = False
+_JOB_FILE = "job.json"
+
+
+def _uploads_dir() -> Path:
+    return Path(cfg().data_dir) / "uploads"
+
+
+def _save_job(job: Job) -> None:
+    """Persist the job record next to its staged files.
+
+    Kept on disk rather than in the database on purpose: an import with
+    ``reset`` drops the schema, and a job table would take the record of the
+    very import that dropped it along with everything else.
+    """
+    import json
+
+    try:
+        path = Path(job.path) / _JOB_FILE
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(job.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8")
+        _replace_with_retry(tmp, path)
+    except Exception as exc:  # noqa: BLE001 — history must never break an import
+        log.warning("could not save ingest job %s: %s", job.id, exc)
+
+
+def _replace_with_retry(tmp: Path, path: Path, attempts: int = 20) -> None:
+    """Atomic rename that tolerates a concurrent reader on Windows.
+
+    On POSIX a rename over an open file just works. On Windows it fails with
+    "Access is denied" while any handle to the target is open — which is
+    exactly when the console is polling the record. Left unretried, the
+    finished job stayed marked "running" on disk and came back as
+    "interrupted" after the next restart.
+    """
+    for i in range(attempts):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.02 * (i + 1))
+
+
+def _load_jobs() -> None:
+    """Read job history from data/uploads once per process.
+
+    A job still marked running belonged to a process that is gone, so it is
+    reported as interrupted — never as running, which would claim an import
+    lock nobody holds.
+    """
+    import json
+
+    global _jobs_loaded
+    with _jobs_lock:
+        if _jobs_loaded:
+            return
+        _jobs_loaded = True
+        root = _uploads_dir()
+        if not root.is_dir():
+            return
+        for path in root.glob(f"*/{_JOB_FILE}"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                job = Job(**{k: data[k] for k in Job.__dataclass_fields__ if k in data})
+            except Exception as exc:  # noqa: BLE001
+                log.warning("unreadable ingest job record %s: %s", path, exc)
+                continue
+            if job.id in _jobs:
+                continue
+            if job.status == "running":
+                job.status = "interrupted"
+                job.error = job.error or "the server stopped before this import finished"
+                job.log.append(job.error)
+            _jobs[job.id] = job
 # One import at a time. ingest_directory() can reset the schema, and two of
 # those interleaving would corrupt the corpus in a way that is very hard to
 # diagnose afterwards.
@@ -564,12 +645,28 @@ def ingest(req: IngestRequest) -> dict:
     adilet HTML are all text, and accepting them this way avoids adding
     python-multipart to a wheel bundle that has to be carried by hand.
     """
-    if _ingest_lock.locked():
-        raise HTTPException(409, "an import is already running")
+    names = [f.name for f in req.files]
+    for name in names:
+        # "." and ".." pass the character check; job.json is the job record.
+        if not _SAFE_NAME.match(name) or name.startswith(".") or name == _JOB_FILE:
+            raise HTTPException(400, f"unsafe filename: {name!r}")
+    if len(set(names)) != len(names):
+        raise HTTPException(400, "the same filename was uploaded twice")
 
-    for f in req.files:
-        if not _SAFE_NAME.match(f.name):
-            raise HTTPException(400, f"unsafe filename: {f.name!r}")
+    # Taken here and released by the worker. Checking .locked() and acquiring in
+    # the thread let two requests arriving together both pass the check; the
+    # second then queued behind the first instead of getting its 409 — with
+    # reset=True that drops the corpus the first one just imported.
+    if not _ingest_lock.acquire(blocking=False):
+        raise HTTPException(409, "an import is already running")
+    try:
+        return _start_ingest(req)
+    except BaseException:
+        _ingest_lock.release()
+        raise
+
+
+def _start_ingest(req: IngestRequest) -> dict:
 
     job_id = uuid.uuid4().hex[:12]
     staged = Path(cfg().data_dir) / "uploads" / job_id
@@ -583,8 +680,10 @@ def ingest(req: IngestRequest) -> dict:
               options={"reset": req.reset, "verify": req.verify,
                        "build_index": req.build_index})
     job.log.append(f"staged {len(req.files)} file(s) in {staged}")
+    _load_jobs()
     with _jobs_lock:
         _jobs[job_id] = job
+    _save_job(job)
 
     threading.Thread(target=_run_ingest, args=(job, req), daemon=True,
                      name=f"ingest-{job_id}").start()
@@ -623,7 +722,8 @@ def _capture_logs(sink: list[str]):
 
 
 def _run_ingest(job: Job, req: IngestRequest) -> None:
-    with _ingest_lock:
+    """Runs with ``_ingest_lock`` already held by the request; releases it."""
+    try:
         started = time.perf_counter()
         try:
             from ..ingest.bundle import BundleVerificationError
@@ -649,10 +749,14 @@ def _run_ingest(job: Job, req: IngestRequest) -> None:
             log.exception("ingest job %s failed", job.id)
         finally:
             job.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            _save_job(job)
+    finally:
+        _ingest_lock.release()
 
 
 @router.get("/ingest/jobs")
 def ingest_jobs() -> list[dict]:
+    _load_jobs()
     with _jobs_lock:
         jobs = sorted(_jobs.values(), key=lambda j: j.started_at, reverse=True)
     return [{k: v for k, v in j.to_dict().items() if k != "log"} for j in jobs]
@@ -660,6 +764,7 @@ def ingest_jobs() -> list[dict]:
 
 @router.get("/ingest/jobs/{job_id}")
 def ingest_job(job_id: str) -> dict:
+    _load_jobs()
     with _jobs_lock:
         job = _jobs.get(job_id)
     if job is None:

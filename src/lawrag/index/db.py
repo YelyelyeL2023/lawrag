@@ -31,10 +31,12 @@ class Database:
     def __init__(self, cfg: Config) -> None:
         self.dsn = cfg.db.dsn
         self.statement_timeout_ms = cfg.db.statement_timeout_ms
+        self.connect_timeout_s = cfg.db.connect_timeout_s
 
     @contextmanager
     def connect(self, autocommit: bool = False) -> Iterator[psycopg.Connection]:
-        conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=autocommit)
+        conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=autocommit,
+                               connect_timeout=int(self.connect_timeout_s))
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SET statement_timeout = {int(self.statement_timeout_ms)}")

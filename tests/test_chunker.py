@@ -11,7 +11,7 @@ from lawrag.config import ChunkConfig
 from lawrag.ingest.parser import parse_act_source
 from lawrag.models import Lang
 
-SAMPLE = Path(__file__).resolve().parents[1] / "data" / "sample"
+SAMPLE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "synthetic"
 
 
 def _chunks(filename, **cfg_kwargs):

@@ -15,5 +15,7 @@ and bilingual alignment all have something to bite on. It deliberately contains:
 - one repealed article, to exercise repeal handling
 - a rate table that must survive chunking intact
 
-Replace this directory with real snapshot bundles from the Эталонный контрольный
-банк НПА before the system answers anything to anyone.
+It lives under `tests/` and nowhere else. It used to sit in `data/sample/` next
+to a real adilet snapshot, where both were ingested together under the same act
+codes and the invented "статья 278 КоАП" replaced the real one as current law.
+The real corpus is in `data/adilet/`; never copy these files into it.

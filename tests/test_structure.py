@@ -67,3 +67,55 @@ def test_subpoints_are_not_split_as_points():
 
 def test_table_is_detected_so_it_is_never_split():
     assert S.contains_table("Категория\tРазмер\nМалый\t15")
+
+
+# --- regressions found on the real adilet KoAP / TK snapshot (2026-09-16) ---
+
+def test_long_article_title_is_still_a_heading():
+    # KoAP article 199's title runs past 300 characters; a length cap merged
+    # 28 RU and 31 KK articles into the article before them.
+    line = "Статья 199. " + "Нарушение требований законодательства " * 12
+    heading = S.match_heading(line, Lang.RU)
+    assert heading is not None and heading.number == "199"
+    kk = "199-бап. " + "Қазақстан Республикасы заңнамасының талаптарын бұзу " * 8
+    assert S.match_heading(kk, Lang.KK).number == "199"
+
+
+@pytest.mark.parametrize("line,lang", [
+    ("Статья 68 с изменениями, внесенными законами РК от 20.04.2023 № 226-VII "
+     "(вводится в действие с 01.07.2023).", Lang.RU),
+    ("Статья 5 настоящего Кодекса применяется ...", Lang.RU),
+    ("5-бапта көзделген жағдайларда ...", Lang.KK),
+])
+def test_footnote_or_prose_is_not_an_article_heading(line, lang):
+    assert S.match_heading(line, lang) is None
+
+
+def test_footnote_without_opener_is_a_footnote():
+    assert S.is_footnote_line(
+        "Статья 68 с изменениями, внесенными законами РК от 20.04.2023 № 226-VII "
+        "(вводится в действие с 01.07.2023)")
+
+
+def test_kazakh_article_heading_variants():
+    assert S.match_heading("434-3 бап. Киім-кешекті киіп жүру", Lang.KK).number == "434-3"
+    assert S.match_heading("701-бап Халықтың саламаттылығы", Lang.KK).number == "701"
+
+
+def test_numbered_note_items_stay_in_the_note():
+    body = ("1. Первая часть.\n2. Вторая часть.\nПримечания.\n"
+            "1. Длящимся признается ...\n2. Под действием непреодолимой силы ...")
+    points, notes = S.split_notes(body)
+    assert [n for n, _ in S.split_points(points)] == ["1", "2"]
+    assert len(notes) == 1 and "Длящимся" in notes[0] and "непреодолимой" in notes[0]
+
+
+def test_kazakh_note_word_and_sanction_word():
+    body = "1. Бірінші бөлік.\nЕскертпелер.\n1. Осы баптың мақсаттары үшін ..."
+    points, notes = S.split_notes(body)
+    assert [n for n, _ in S.split_points(points)] == ["1"]
+    assert len(notes) == 1
+    # "ескерту жасауға" is the sanction "a warning", not a note.
+    sanction = "1. Құқық бұзушылық –\nескерту жасауға не жеке тұлғаларға айыппұл салуға әкеп соғады."
+    points, notes = S.split_notes(sanction)
+    assert notes == [] and "ескерту жасауға" in points

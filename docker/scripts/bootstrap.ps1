@@ -18,14 +18,11 @@ docker compose @files build app
 Write-Host "==> starting Postgres"
 docker compose @files up -d --wait db
 
-Write-Host "==> ingesting the SYNTHETIC sample corpus"
-docker compose @files run --rm cli ingest data/sample --reset --no-verify
+Write-Host "==> ingesting the adilet snapshot (data/adilet)"
+docker compose @files run --rm cli ingest data/adilet --reset --no-verify
 
 Write-Host "==> corpus"
 docker compose @files run --rm cli stats
-
-Write-Host "==> retrieval eval"
-docker compose @files run --rm cli eval
 
 Write-Host "==> starting the API and console"
 docker compose @files up -d app
@@ -38,3 +35,6 @@ Write-Host '    docker compose run --rm cli search "Какой штраф за �
 Write-Host '    docker compose run --rm cli ask    "Продлевается ли срок для малого бизнеса?"'
 Write-Host ""
 Write-Host 'ask needs the generator: docker compose --profile llm up -d llm'
+Write-Host ""
+Write-Host 'cli eval runs questions.sample.yaml, written against the synthetic test fixture, not this corpus.'
+Write-Host 'Write a question set for data/adilet first; docker compose run --rm tests exercises the fixture set.'

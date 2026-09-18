@@ -544,6 +544,8 @@ pre.packet {
 
 .toc { font-size: 13px; }
 .toc .chapter { margin-top: 18px; }
+.toc summary.lbl { cursor: pointer; list-style-position: outside; }
+.toc details.chapter[open] > summary.lbl { margin-bottom: 4px; }
 .toc .chapter > .lbl {
   font: 600 12px/1.4 var(--sans); color: var(--ink-2);
   letter-spacing: .01em; padding: 6px 0; border-bottom: 1px solid var(--rule-soft);

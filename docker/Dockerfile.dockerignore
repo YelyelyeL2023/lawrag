@@ -22,3 +22,5 @@ data/bundles/
 data/snapshots/
 data/uploads/
 data/context_cache.json
+
+**/.env

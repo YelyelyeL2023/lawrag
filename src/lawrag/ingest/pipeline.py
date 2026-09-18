@@ -37,19 +37,64 @@ def _release_from_dir(path: Path, verify: bool) -> CorpusRelease:
 
 
 def _collect_refs_and_terms(root: Node, lang: Lang, act_code: str):
-    refs = []
+    """References grouped by the validity of the text they were read from.
+
+    A reference is only as current as the sentence it sits in: once articles
+    carry their own start dates, stamping every edge with the snapshot date
+    would make the citation graph invisible to any as-of query before the day
+    the snapshot was taken.
+    """
+    refs: dict[tuple, list] = {}
     terms = []
     for node in root.walk():
         text = node.texts.get(lang)
         if text is None or not text.body:
             continue
         if node.kind in (NodeKind.ARTICLE, NodeKind.POINT, NodeKind.NOTE):
-            refs.extend(R.extract_refs(node.id, act_code, text.body, lang))
+            found = R.extract_refs(node.id, act_code, text.body, lang)
+            if found:
+                refs.setdefault((text.valid_from, text.valid_to), []).extend(found)
         if node.kind is NodeKind.ARTICLE and R.is_definition_article(text.heading):
             for term, definition in R.extract_definitions(node.id, act_code, text.body):
                 terms.append((term, definition, act_code, node.id,
                               text.valid_from, text.valid_to))
     return refs, terms
+
+
+def _refuse_mixed_editions(sources: list[Path], html_docs: list[tuple[str, dict]]) -> None:
+    """Refuse a directory holding two different documents under one act code.
+
+    Redactions of one act are expected to share an official id. Two sources for
+    the same act code and language with *different* ids are two different
+    documents — the synthetic test fixture sitting next to a real adilet
+    snapshot, say — and ingesting both interleaves their articles by number:
+    the fixture's "статья 278" closes the real one and answers as current law.
+    That happened to this repository's own data/sample directory.
+    """
+    import yaml
+
+    seen: dict[tuple[str, str], dict[str, str]] = {}
+    for source in sources:
+        raw = source.read_text(encoding="utf-8").lstrip()
+        if not raw.startswith("---"):
+            continue
+        meta = yaml.safe_load(raw.split("---", 2)[1]) or {}
+        key = (str(meta.get("code")), str(meta.get("lang") or ""))
+        seen.setdefault(key, {})[str(meta.get("official_id", ""))] = source.name
+    for _, meta in html_docs:
+        key = (str(meta.get("code")), str(meta.get("lang") or ""))
+        seen.setdefault(key, {})[str(meta.get("official_id", ""))] = meta["file"]
+    clashes = {k: v for k, v in seen.items() if len(v) > 1}
+    if clashes:
+        detail = "; ".join(
+            f"{code} [{lang or '?'}]: " + ", ".join(f"{oid or '<no id>'} ({name})"
+                                                  for oid, name in ids.items())
+            for (code, lang), ids in sorted(clashes.items())
+        )
+        raise ValueError(
+            "refusing to ingest: these act codes come from more than one document "
+            f"(different official ids): {detail}. Put each corpus in its own directory."
+        )
 
 
 def ingest_directory(cfg: Config, path: Path, *, verify: bool = True,
@@ -81,6 +126,7 @@ def ingest_directory(cfg: Config, path: Path, *, verify: bool = True,
 
     if not sources and not html_docs:
         raise FileNotFoundError(f"no *.act.txt or adilet documents.json found in {path}")
+    _refuse_mixed_editions(sources, html_docs)
 
     for source in sources:
         act, root, doc = parse_act_source(source.read_text(encoding="utf-8"))
@@ -107,19 +153,25 @@ def _index_one(indexer: Indexer, chunker: Chunker, act, root, doc, release_id: s
     chunks = chunker.chunk_act(root, doc.lang, release_id)
     indexer.index_chunks(chunks, release_id)
 
-    refs, terms = _collect_refs_and_terms(root, doc.lang, doc.act_code)
-    indexer.index_xrefs(refs, doc.lang, release_id, doc.valid_from, doc.valid_to)
+    grouped_refs, terms = _collect_refs_and_terms(root, doc.lang, doc.act_code)
+    n_refs = 0
+    for (valid_from, valid_to), refs in grouped_refs.items():
+        n_refs += indexer.index_xrefs(refs, doc.lang, release_id, valid_from, valid_to)
     indexer.index_terms(terms, doc.lang, release_id)
 
     # Anything this act still had open before the snapshot's effective date, and
     # that the snapshot no longer contains, was repealed. Nothing in the
-    # per-node path can see it, so it is closed here or never.
-    indexer.close_dropped(doc.act_code, doc.lang, doc.valid_from)
+    # per-node path can see it, so it is closed here or never. Nodes the
+    # snapshot does contain are left alone: their older redactions were already
+    # closed by the per-node path, and their current text may legitimately
+    # start before the snapshot date.
+    present = {node.id for node in root.walk() if doc.lang in node.texts}
+    indexer.close_dropped(doc.act_code, doc.lang, doc.valid_from, keep=present)
 
     totals["acts"] += 1
     totals["chunks"] += len(chunks)
-    totals["refs"] += len(refs)
+    totals["refs"] += n_refs
     totals["terms"] += len(terms)
     log.info("indexed %s [%s]: %d chunks, %d refs, %d terms",
-             doc.act_code, doc.lang.value, len(chunks), len(refs), len(terms))
+             doc.act_code, doc.lang.value, len(chunks), n_refs, len(terms))
     return totals

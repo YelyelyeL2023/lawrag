@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLE = ROOT / "data" / "sample"
+# The synthetic fixture, never the real corpus: the assertions below are about
+# invented article texts, and the real adilet snapshot lives in data/adilet.
+SAMPLE = ROOT / "tests" / "fixtures" / "synthetic"
 TEST_DSN_ENV = "LAWRAG_TEST_DSN"
 
 
@@ -58,7 +60,15 @@ def _create_database(dsn: str) -> None:
 def config():
     from lawrag.config import load_config
 
-    return load_config(ROOT / "config" / "default.yaml")
+    cfg = load_config(ROOT / "config" / "default.yaml")
+    # The shipped config names the production models. The suite must run on a
+    # machine with no weights on disk, so it pins the deterministic placeholders
+    # (the same ones config/local.yaml uses) instead of skipping or crashing on
+    # the first import of FlagEmbedding.
+    cfg.embedding.backend = "hash"
+    cfg.rerank.backend = "none"
+    cfg.llm.backend = "echo"
+    return cfg
 
 
 @pytest.fixture(scope="session")

@@ -13,6 +13,7 @@ exactly what it was.
 from __future__ import annotations
 
 import sys
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Literal, Optional
@@ -27,7 +28,7 @@ from ..generate.answer import AnswerService
 from ..index.db import Database
 from ..logging_setup import get_logger, setup_logging
 from ..models import Lang
-from . import console
+from . import console, security
 
 log = get_logger(__name__)
 
@@ -42,7 +43,12 @@ app = FastAPI(
                  "Not legal advice."),
 )
 
+app.add_middleware(security.AccessControl)
+
 _service: AnswerService | None = None
+# Endpoints run in a thread pool: without this, two first questions arriving
+# together each load the embedder and reranker, twice the memory on the GPU.
+_service_lock = threading.Lock()
 
 
 def service() -> AnswerService:
@@ -56,15 +62,18 @@ def service() -> AnswerService:
     in the server log, which tells the person at the browser nothing at all.
     """
     global _service
-    if _service is None:
-        try:
-            _service = AnswerService(cfg)
-        except Exception as exc:  # noqa: BLE001
-            detail = _startup_failure(exc)
-            console.record_answering_error(detail)
-            log.error("answering stack unavailable: %s", detail)
-            raise HTTPException(503, detail) from exc
-        console.clear_answering_error()
+    if _service is not None:
+        return _service
+    with _service_lock:
+        if _service is None:
+            try:
+                _service = AnswerService(cfg)
+            except Exception as exc:  # noqa: BLE001
+                detail = _startup_failure(exc)
+                console.record_answering_error(detail)
+                log.error("answering stack unavailable: %s", detail)
+                raise HTTPException(503, detail) from exc
+            console.clear_answering_error()
     return _service
 
 

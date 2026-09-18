@@ -78,6 +78,12 @@ services:
       LAWRAG_RERANK_DEVICE: ${RERANK_DEVICE:-cpu}
       LAWRAG_LLM_BASE_URL: http://llm:8080/v1
       LAWRAG_LOG_LEVEL: ${LAWRAG_LOG_LEVEL:-INFO}
+      # Access control (api/security.py). The port below is published on the
+      # host's 127.0.0.1 only, but requests arrive from the Docker bridge, so
+      # the loopback rule for imports is lifted here. Set LAWRAG_API_TOKEN in
+      # .env before publishing the port anywhere else.
+      LAWRAG_API_TOKEN: ${LAWRAG_API_TOKEN:-}
+      LAWRAG_ALLOW_REMOTE_WRITES: ${LAWRAG_ALLOW_REMOTE_WRITES:-1}
     volumes: &lawrag_volumes
       # Config and corpus are mounted, never baked in: an image carrying a
       # snapshot of the law goes stale without any symptom.
@@ -96,7 +102,7 @@ services:
 
   # --------------------------------------------------------------- cli --
   # One-shot `lawrag` commands against the same image, config and database:
-  #   docker compose run --rm cli ingest data/sample --reset --no-verify
+  #   docker compose run --rm cli ingest data/adilet --reset --no-verify
   #   docker compose run --rm cli search "..." --as-of 2025-03-15
   #   docker compose run --rm cli eval
   cli:

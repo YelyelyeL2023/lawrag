@@ -106,12 +106,24 @@ class ApiError extends Error {
   constructor(status, detail) { super(detail); this.status = status; }
 }
 
-async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch('/api' + path, {
-    method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+/* When the server sets LAWRAG_API_TOKEN every request needs it. The token is
+ * asked for once, on the first 401, and kept for this browser tab only
+ * (sessionStorage) — never written anywhere that outlives the tab. */
+const TOKEN_KEY = 'lawrag.token';
+function readToken() { try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } }
+function writeToken(t) { try { t ? sessionStorage.setItem(TOKEN_KEY, t) : sessionStorage.removeItem(TOKEN_KEY); } catch { /* private mode */ } }
+
+async function request(url, { method = 'GET', body } = {}, retried = false) {
+  const headers = {};
+  if (body) headers['content-type'] = 'application/json';
+  const token = readToken();
+  if (token) headers.authorization = 'Bearer ' + token;
+  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401 && !retried) {
+    writeToken('');
+    const entered = window.prompt('Сервер требует токен доступа (LAWRAG_API_TOKEN):', '');
+    if (entered) { writeToken(entered.trim()); return request(url, { method, body }, true); }
+  }
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
@@ -119,19 +131,14 @@ async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+async function api(path, opts = {}) {
+  return request('/api' + path, opts);
+}
+
 /** The answering endpoints are not under /api — they are the CLI-mirroring
  *  surface and their paths are part of the project's contract. */
-async function core(path, { method = 'GET', body } = {}) {
-  const res = await fetch(path, {
-    method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
-  if (!res.ok) throw new ApiError(res.status, (data && (data.detail || data.message)) || res.statusText);
-  return data;
+async function core(path, opts = {}) {
+  return request(path, opts);
 }
 
 /* =========================================================== components */
@@ -217,6 +224,7 @@ function verdictText(verdict) {
  *  diagnosis; the original string stays on the element's title attribute so
  *  nothing is actually hidden from whoever has to fix it. */
 const ABSTAIN_TEXT = {
+  cited_text_not_in_force_on_date: 'нет редакции статьи на эту дату',
   no_matching_provisions: 'в корпусе нет норм по этому вопросу',
   no_model_loaded: 'генератор не настроен',
 };
@@ -783,36 +791,90 @@ async function openAct(act, right) {
     data = await api(`/acts/${encodeURIComponent(act.code)}/toc?${qs}`);
   } catch (err) { tocBox.replaceChildren(errorBox(err)); return; }
 
+  // A code runs to a thousand articles or more. Rendering every one as a
+  // button made the table of contents slow to draw and impossible to scan, so
+  // chapters start collapsed (except in small acts) and a filter narrows by
+  // number or heading. Article buttons are built only when a chapter opens.
   const toc = h('div.toc');
-  const articles = [];
-  const walk = (nodes, depth) => {
+  const groups = [];            // { label, items: [node] }
+  let current = null;
+  const walk = (nodes) => {
     for (const node of nodes) {
       if (node.kind === 'article') {
-        const btn = h('button.article', {
-          type: 'button',
-          onclick: () => {
-            articles.forEach((b) => b.classList.remove('on'));
-            btn.classList.add('on');
-            openNode(node.id, detail);
-          },
-        },
-          h('span.no', node.number ? `ст. ${node.number}` : '—'),
-          h('span' + (node.heading ? '.h' : '.h.absent'), node.heading || 'нет текста на эту дату'));
-        articles.push(btn);
-        toc.append(btn);
+        if (!current) { current = { label: '', items: [] }; groups.push(current); }
+        current.items.push(node);
       } else if (node.kind !== 'act') {
-        toc.append(h('div.chapter', h('div.lbl', node.heading || `${node.kind} ${node.number || ''}`)));
+        const kindRu = { section: 'Раздел', chapter: 'Глава', paragraph: 'Параграф' }[node.kind] || node.kind;
+        current = { label: node.heading ? `${kindRu} ${node.number || ''}. ${node.heading}` : `${kindRu} ${node.number || ''}`, items: [] };
+        groups.push(current);
       }
-      if (node.children && node.children.length) walk(node.children, depth + 1);
+      if (node.children && node.children.length) walk(node.children);
     }
   };
-  walk(data.tree, 0);
+  walk(data.tree);
+  const total = groups.reduce((a, g) => a + g.items.length, 0);
+  const openByDefault = total <= 150;
+  let selected = null;
+
+  const articleButton = (node) => {
+    const btn = h('button.article', {
+      type: 'button', class: selected === node.id ? 'on' : null,
+      onclick: () => {
+        selected = node.id;
+        toc.querySelectorAll('.article.on').forEach((b) => b.classList.remove('on'));
+        btn.classList.add('on');
+        openNode(node.id, detail);
+      },
+    },
+      h('span.no', node.number ? `ст. ${node.number}` : '—'),
+      h('span' + (node.heading ? '.h' : '.h.absent'), node.heading || 'нет текста на эту дату'));
+    return btn;
+  };
+
+  const render = (query) => {
+    const q = query.trim().toLowerCase();
+    const num = q.replace(/^ст(атья)?\.?\s*/, '');
+    // A number is a lookup of that article, never a match on "Глава 16".
+    const numeric = /^\d+(-\d+)*$/.test(num);
+    const matches = (node) => !q
+      || (numeric ? (node.number || '') === num : (node.heading || '').toLowerCase().includes(q));
+    toc.replaceChildren();
+    let shown = 0;
+    for (const g of groups) {
+      const items = g.items.filter(matches);
+      const labelHit = q && !numeric && g.label.toLowerCase().includes(q);
+      if (q && !items.length && !labelHit) continue;
+      const list = labelHit && !items.length ? g.items : items;
+      shown += list.length;
+      if (!g.label) { list.forEach((node) => toc.append(articleButton(node))); continue; }
+      // A section whose articles all sit in its chapters is a heading, not a
+      // group: rendering it as an expandable "· 0" invites a click on nothing.
+      if (!list.length) { toc.append(h('div.chapter', h('div.lbl', g.label))); continue; }
+      const body = h('div');
+      const open = Boolean(q) || openByDefault;
+      const fill = () => { if (!body.childElementCount) list.forEach((node) => body.append(articleButton(node))); };
+      const details = h('details.chapter', { open },
+        h('summary.lbl', g.label, h('span.dim', { style: 'margin-left:6px;font-weight:400' }, `· ${list.length}`)),
+        body);
+      if (open) fill();
+      details.addEventListener('toggle', () => { if (details.open) fill(); });
+      toc.append(details);
+    }
+    if (!shown) toc.append(h('div.dim', { style: 'padding:16px 0' }, q ? 'Ничего не найдено.' : 'На эту дату структура пуста.'));
+  };
+
+  const filter = h('input', {
+    type: 'search', placeholder: 'Номер статьи или слово из заголовка',
+    style: 'width:100%;margin:6px 0 4px',
+    oninput: () => render(filter.value),
+  });
   tocBox.replaceChildren(
     h('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px' },
-      eyebrow(`Оглавление — ${articles.length} ст.`),
+      eyebrow(`Оглавление — ${total} ст.`),
       h('span.dim', { style: 'font-size:11.5px' }, shortDate(data.as_of))),
+    filter,
     toc);
-  if (!articles.length) tocBox.append(h('div.dim', { style: 'padding:16px 0' }, 'На эту дату структура пуста.'));
+  render('');
 }
 
 async function openNode(nodeId, detail) {
@@ -974,13 +1036,14 @@ function jobHistory() {
   const box = h('div.card', h('header', h('div.eyebrow', 'История импортов')), h('div.body', loading()));
   api('/ingest/jobs').then((jobs) => {
     const body = box.lastChild;
-    if (!jobs.length) { body.replaceChildren(h('div.dim', { style: 'font-size:12.5px' }, 'В этом процессе импортов ещё не было.')); return; }
+    if (!jobs.length) { body.replaceChildren(h('div.dim', { style: 'font-size:12.5px' }, 'Импортов через консоль ещё не было.')); return; }
     body.replaceChildren(h('table.grid',
       h('thead', h('tr', h('th', 'Задача'), h('th', 'Файлы'), h('th', 'Статус'), h('th.r', 'Начало'))),
       h('tbody', jobs.map((j) => h('tr',
         h('td', h('span.mono', j.id)),
         h('td', String(j.files.length)),
-        h('td', j.status === 'done' ? chip('готово', 'ok') : j.status === 'failed' ? chip('ошибка', 'bad') : chip('выполняется', 'warn')),
+        h('td', j.status === 'done' ? chip('готово', 'ok') : j.status === 'failed' ? chip('ошибка', 'bad')
+          : j.status === 'interrupted' ? chip('прерван', 'bad') : chip('выполняется', 'warn')),
         h('td.r.num', whenAgo(j.started_at)))))));
   }).catch(() => { box.lastChild.replaceChildren(h('div.dim', 'Недоступно.')); });
   return box;
@@ -1106,8 +1169,19 @@ async function viewMonitor(root) {
         h('div', { style: 'margin-top:7px' },
           'Поиск на дату и история редакций для такого корпуса ничего не меняют: ',
           'любая статья выглядит действующей с 1900 года и ни разу не изменённой. ',
-          h('span.mono', 'documents.json'), ' должен содержать ',
-          h('span.mono', 'valid_from'), ' для каждого документа.'))));
+          'Переимпортируйте снимок adilet со сбросом схемы — даты берутся из сносок к статьям; ',
+          'для ', h('span.mono', '.act.txt'), ' укажите ', h('span.mono', 'valid_from'),
+          ' или ', h('span.mono', 'adopted_on'), '.'))));
+  } else if (live && dating.total && !dating.closed) {
+    // Dated, but only the redactions in force today are stored. Say what that
+    // means for a date search, because the date control does not.
+    root.append(h('div.banner', icon('i-warn'),
+      h('div',
+        h('strong', 'Только действующие редакции. '),
+        'Даты начала взяты из сносок, но прежние тексты статей не импортированы: ',
+        'вопрос на дату раньше последнего изменения статьи не найдёт её текста, и система откажется отвечать, ',
+        'а не процитирует сегодняшнюю редакцию. Для истории нужен снимок, загруженный на более раннюю дату (',
+        h('span.mono', 'lawrag fetch --as-of'), ').')));
   }
 
   const c = stats.counts || {};
@@ -1126,7 +1200,7 @@ async function viewMonitor(root) {
       detail(`${n((stats.unresolved || []).reduce((a, r) => a + r.n, 0))} неразрешённых`)),
     statTile('Определения', c.term, detail('глоссарий')),
     statTile('Редакции', dating.distinct_starts,
-      detail(dating.undated ? `${n(dating.undated)} без даты` : 'все датированы'),
+      detail(dating.undated ? `${n(dating.undated)} без даты` : dating.closed ? 'все датированы' : 'только действующие'),
       live && dating.total > 0 && dating.undated > 0),
     statTile('Запросы', q.total, detail(`${n(q.last_24h)} за сутки · ${ms(q.avg_latency_ms)} средн.`))));
 

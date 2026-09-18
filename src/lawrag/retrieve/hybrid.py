@@ -248,6 +248,37 @@ class HybridRetriever:
                 out.extend(_row_to_hit(r) for r in cur.fetchall())
         return out
 
+    def citations_without_text(self, q: QueryAnalysis) -> list[dict]:
+        """Named articles that exist in the corpus but have no text on the date.
+
+        With a corpus of current snapshots, "статья 16 КоАП на 1 марта 2026"
+        finds nothing when article 16 was rewritten in July 2026: the earlier
+        wording was never imported. That is a different fact from "no such
+        article", and the user needs to be told which one it is.
+        """
+        if not q.article_hints:
+            return []
+        out: list[dict] = []
+        with self.db.connect() as conn, conn.cursor() as cur:
+            for act, number in q.article_hints:
+                acts = [act] if act else (q.act_hints or list_all_acts(self.db))
+                nodes = [f"{a}/st{number}" for a in acts]
+                cur.execute(
+                    """
+                    SELECT t.node_id, min(t.valid_from) AS earliest, max(t.valid_to) AS latest,
+                           bool_or(t.valid_from <= %(as_of)s AND t.valid_to >= %(as_of)s) AS covered
+                      FROM node_text t
+                     WHERE t.node_id = ANY(%(nodes)s) AND t.lang = ANY(%(langs)s)
+                     GROUP BY t.node_id
+                    """,
+                    {"nodes": nodes, "langs": self._langs(q), "as_of": q.as_of},
+                )
+                for row in cur.fetchall():
+                    if not row["covered"]:
+                        out.append({"node_id": row["node_id"], "earliest": row["earliest"],
+                                    "latest": row["latest"]})
+        return out
+
     # ---------------------------------------------------------------- fuse --
     def search(self, q: QueryAnalysis) -> list[Hit]:
         dense = self.dense(q, self.cfg.dense_k)

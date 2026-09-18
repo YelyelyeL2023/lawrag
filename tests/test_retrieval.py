@@ -87,3 +87,31 @@ def test_packet_states_validity_and_location(live_db):
     assert "ИСТОЧНИК 1" in text
     assert "Действует с" in text
     assert "Расположение" in text
+
+
+def test_named_article_without_text_on_the_date_abstains(live_db):
+    """koap/st278 is stored from 2024 only; asking about 2020 must not substitute
+    some other article's rule for the one the user named."""
+    from lawrag.generate.answer import AnswerService
+
+    answer = AnswerService(live_db).ask("что говорит статья 278 КоАП",
+                                        as_of=date(2020, 6, 1), log_query=False)
+    assert answer.abstained
+    assert answer.abstain_reason == "cited_text_not_in_force_on_date"
+    assert answer.unavailable_citations[0]["node_id"] == "koap/st278"
+    assert answer.unavailable_citations[0]["earliest"] == "2024-01-01"
+
+
+def test_calibration_finds_a_gap_on_the_fixture(live_db):
+    from pathlib import Path
+
+    from lawrag.evalkit.calibrate import calibrate
+
+    questions = Path(__file__).resolve().parents[1] / "src" / "lawrag" / "evalkit" / "questions.sample.yaml"
+    report = calibrate(live_db, questions)
+    dense = next(s for s in report.signals if s.name == "dense")
+    assert dense.answerable and dense.unanswerable
+    assert dense.separable
+    assert dense.highest_unanswerable < dense.suggested < dense.lowest_answerable
+    # The live config is untouched by the probe.
+    assert live_db.retrieval.min_dense_score == dense.current

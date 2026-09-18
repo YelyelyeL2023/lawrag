@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from ..config import Config
@@ -27,6 +27,8 @@ class RetrievalResult:
     hydrated: list[HydratedHit]
     packet: Packet
     timings_ms: dict[str, int]
+    # Articles the question named that exist but have no text on the as-of date.
+    unavailable_citations: list[dict] = field(default_factory=list)
 
 
 class RetrievalEngine:
@@ -66,9 +68,10 @@ class RetrievalEngine:
         timings["packet"] = int((time.perf_counter() - t) * 1000)
         timings["total"] = int((time.perf_counter() - t0) * 1000)
 
+        unavailable = self.retriever.citations_without_text(analysis)
         log.info("retrieved %d hits for %r (as of %s) in %dms",
                  len(top), question[:60], analysis.as_of, timings["total"])
-        return RetrievalResult(analysis, top, hydrated, packet, timings)
+        return RetrievalResult(analysis, top, hydrated, packet, timings, unavailable)
 
     @staticmethod
     def _dedupe_languages(hits: list[Hit], prefer: Lang) -> list[Hit]:
@@ -80,7 +83,10 @@ class RetrievalEngine:
         """
         best: dict[str, Hit] = {}
         for hit in hits:
-            key = f"{hit.node_id}@{hit.valid_from.isoformat()}"
+            # Every hit is in force on the same as-of date, so one node id is one
+            # norm. Keying on valid_from as well kept both faces whenever the RU
+            # and KK footnotes dated the same article differently.
+            key = hit.node_id
             current = best.get(key)
             if current is None:
                 best[key] = hit

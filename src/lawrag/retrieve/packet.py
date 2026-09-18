@@ -54,7 +54,8 @@ def _validity_line(hh: HydratedHit, lang: Lang, as_of: date) -> str:
             f"{hh.hit.valid_to.isoformat()} — {labels['superseded']}")
 
 
-def render_source(index: int, hh: HydratedHit, lang: Lang, as_of: date) -> str:
+def render_source(index: int, hh: HydratedHit, lang: Lang, as_of: date,
+                  article_shown_in: int | None = None) -> str:
     labels = _L[lang]
     head = f"[{labels['source']} {index}] {hh.hit.act_title} — {hh.hit.heading}"
     parts = [head, _validity_line(hh, lang, as_of)]
@@ -65,8 +66,15 @@ def render_source(index: int, hh: HydratedHit, lang: Lang, as_of: date) -> str:
     parts.append(f"{labels['location']}: {hh.hit.hierarchy_path}")
     if hh.hit.node_id != hh.hit.article_node_id:
         parts.append(f"{labels['matched']}: {hh.hit.node_id}")
-    body = hh.article_text or hh.hit.display_text
-    parts.append(f"{labels['article']}:\n{body}")
+    if article_shown_in is not None:
+        # Two points of one article are two sources but one text. Repeating a
+        # long article per point spent the token budget on copies and pushed
+        # other sources out of the packet.
+        parts.append(f"{labels['article']}: [{labels['source']} {article_shown_in}]")
+        parts.append(f"{labels['matched']}:\n{hh.hit.display_text}")
+    else:
+        body = hh.article_text or hh.hit.display_text
+        parts.append(f"{labels['article']}:\n{body}")
 
     refs = [s for s in hh.supporting if s.kind == "reference"]
     if refs:
@@ -88,8 +96,11 @@ def build_packet(hydrated: list[HydratedHit], lang: Lang, as_of: date,
     total = 0
     dropped = 0
 
+    shown: dict[tuple[str, str], int] = {}
     for i, hh in enumerate(hydrated, 1):
-        block = render_source(i, hh, lang, as_of)
+        key = (hh.hit.article_node_id, hh.hit.lang)
+        block = render_source(i, hh, lang, as_of,
+                              shown.get(key) if hh.article_text else None)
         cost = estimate_tokens(block)
         if total + cost > max_tokens and blocks:
             # Budget exhausted. Say so rather than silently truncating: a packet
@@ -98,6 +109,7 @@ def build_packet(hydrated: list[HydratedHit], lang: Lang, as_of: date,
             dropped = len(hydrated) - i + 1
             break
         blocks.append(block)
+        shown.setdefault(key, i)
         total += cost
         sources.append({
             "index": i,

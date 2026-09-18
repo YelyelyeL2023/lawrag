@@ -1,0 +1,10 @@
+# Normalise line endings in the repository; Windows checkouts may use CRLF.
+* text=auto
+# Must stay LF: bash and the Linux containers choke on CRLF ($'\r': command not found).
+*.sh text eol=lf
+Dockerfile* text eol=lf
+*.yml text eol=lf
+*.ps1 text eol=crlf
+# Corpus snapshots are hashed into the release manifest: never rewrite their bytes.
+data/** -text
+tests/fixtures/** -text

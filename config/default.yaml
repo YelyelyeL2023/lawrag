@@ -59,9 +59,9 @@ retrieval:
   # Absolute relevance floor — what makes the system abstain on an
   # out-of-corpus question instead of answering from the least-bad match.
   # These are on the embedding model's own scale. RE-TUNE THEM when you switch
-  # embedding.backend to bge-m3: run `lawrag search` on a handful of questions
-  # you know are answerable and a handful you know are not, and put the
-  # threshold in the gap. Leaving the placeholder values in place with a real
+  # embedding.backend to bge-m3: `lawrag calibrate [questions.yaml]` runs the
+  # question set with the floor off and proposes each value in the gap between
+  # answerable and out-of-corpus questions. Leaving the placeholder values in place with a real
   # model is a silent failure — either everything passes or nothing does.
   # min_dense_score is a cosine on the embedding model's scale — re-tune it when
   # you switch backend. min_lexical_score is a ts_rank_cd value (corpus- and

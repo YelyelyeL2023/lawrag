@@ -77,6 +77,11 @@ def fetch(out: Path = typer.Argument(..., help="Directory to write the snapshot 
           codes: str = typer.Option("", help="Comma-separated act codes; default all known."),
           langs: str = typer.Option("ru,kk"),
           delay: float = typer.Option(2.0, help="Seconds between requests."),
+          as_of: Optional[str] = typer.Option(
+              None, "--as-of",
+              help="Fetch the redaction in force on this date (YYYY-MM-DD) instead of the "
+                   "current one. Use a separate output directory per date, and ingest each; "
+                   "a page whose footnotes cite a later amendment is rejected."),
           ca_bundle: Optional[str] = typer.Option(
               None, "--ca-bundle",
               help="Path to a PEM CA bundle to verify TLS against. Use when adilet's "
@@ -104,7 +109,8 @@ def fetch(out: Path = typer.Argument(..., help="Directory to write the snapshot 
     if not insecure:
         insecure = os.environ.get("LAWRAG_INSECURE", "").strip().lower() in {"1", "true", "yes", "on"}
     plan = build_plan([c for c in codes.split(",") if c] or None,
-                      tuple(l for l in langs.split(",") if l))
+                      tuple(l for l in langs.split(",") if l),
+                      as_of=_as_of(as_of))
     console.print(f"fetching {len(plan)} documents")
     do_fetch(plan, out, delay_s=delay, ca_bundle=ca_bundle, insecure=insecure)
 
@@ -310,6 +316,22 @@ def eval_cmd(path: Path = typer.Argument(Path("src/lawrag/evalkit/questions.samp
 
 
 @app.command()
+def calibrate(path: Path = typer.Argument(Path("src/lawrag/evalkit/questions.sample.yaml")),
+              config: Optional[str] = ConfigOpt):
+    """Measure where the relevance floor should sit for this model and corpus.
+
+    Runs the question set with the floor off and proposes min_dense_score,
+    min_lexical_score and min_trigram_score in the gap between the weakest
+    answerable question and the strongest out-of-corpus one. Run it after
+    switching embedding.backend, and after a large corpus change.
+    """
+    from .evalkit.calibrate import calibrate as run, print_calibration
+
+    cfg = _cfg(config)
+    print_calibration(run(cfg, path), console)
+
+
+@app.command()
 def inspect(path: Path,
             code: str = typer.Option(..., help="Act code, e.g. koap."),
             lang: Optional[str] = typer.Option(None, help="ru | kk; auto-detected if omitted."),
@@ -385,7 +407,11 @@ def serve(host: str = typer.Option("127.0.0.1"), port: int = typer.Option(8000),
     """Run the HTTP API."""
     import uvicorn
 
+    from .api.security import warn_if_exposed
+
     _cfg(config)
+    if warning := warn_if_exposed(host):
+        console.print(f"[yellow]warning[/yellow] {warning}")
     console.print(f"[green]API[/green]     http://{host}:{port}/docs")
     console.print(f"[green]Консоль[/green] http://{host}:{port}/")
     uvicorn.run("lawrag.api.main:app", host=host, port=port, reload=False)

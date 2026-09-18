@@ -107,3 +107,22 @@ DISCLAIMER = {
               "кеңесі емес. Норманың өзектілігін тексеріңіз, қажет болса заңгерге "
               "жүгініңіз."),
 }
+
+
+def no_text_on_date(lang: Lang, as_of, unavailable: list[dict]) -> str:
+    """The named article exists, but no wording of it is stored for that date."""
+    lines = []
+    for u in unavailable:
+        if lang is Lang.KK:
+            lines.append(f"— {u['node_id']}: мәтін {u['earliest']} бастап сақталған")
+        else:
+            lines.append(f"— {u['node_id']}: текст хранится с {u['earliest']}")
+    if lang is Lang.KK:
+        head = (f"Сұралған бап корпуста бар, бірақ оның {as_of.isoformat()} күнгі редакциясы "
+                "жүктелмеген. Бүгінгі мәтінді сол күнге қолданылған деп келтіруге болмайды. "
+                "Заңгерге жүгініңіз немесе сол күнге дейінгі редакцияны жүктеңіз.")
+    else:
+        head = (f"Статья есть в корпусе, но её редакция на {as_of.isoformat()} не импортирована. "
+                "Сегодняшний текст нельзя выдавать за действовавший в тот день. Обратитесь к "
+                "юристу или загрузите редакцию на эту дату.")
+    return head + "\n\n" + "\n".join(lines)

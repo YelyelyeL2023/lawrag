@@ -355,9 +355,10 @@ That lands `bge-m3/` and `bge-reranker-v2-m3/` under `MODEL_DIR`; put the
 that will later load the weights, so what is fetched is what is loaded.
 
 ```bash
-docker/scripts/serve_llm.sh A    # Qwen3.5-9B Q4_K_M, full GPU offload, ~50 tok/s
-docker/scripts/serve_llm.sh B    # Qwen3.6-35B-A3B, MoE experts in RAM, ~30 tok/s
-docker/scripts/serve_llm.sh B --cpu   # no card
+docker/scripts/serve_llm.sh           # profile B (the default)
+docker/scripts/serve_llm.sh A         # Qwen3.5-9B Q4_K_M, full GPU offload, ~50 tok/s
+docker/scripts/serve_llm.sh B         # Qwen3.6-35B-A3B, MoE experts in RAM, ~30 tok/s
+docker/scripts/serve_llm.sh B --cpu   # no card: CPU image, all layers on the CPU
 ```
 
 Both scripts are wrappers around `docker compose --profile llm up -d llm`: the
@@ -365,13 +366,14 @@ profile differs only in `LLM_MODEL_FILE` and `LLM_N_CPU_MOE`, so switching
 models is a variable, not a rebuild. Nothing in the generator path is installed
 on the host — there is no `llama-server.exe` to put on `PATH`.
 
-Profile A is the safe default. Profile B is the quality upgrade and needs ~20 GB
-of free RAM for weights — tight on 32 GB once Postgres is also running; 64 GB is
-the highest-ROI upgrade for this box. For MoE offload, **memory bandwidth beats
-core count** — verify your DDR5 is running at its rated speed before blaming the
-software. The 50-series is Blackwell (sm_120): pin a current
-`ghcr.io/ggml-org/llama.cpp:server-cuda` tag (`LLAMA_IMAGE`) or you will
-silently fall back to slow paths.
+Profile B is the default — in the script, and in `docker-compose.yml` when no
+`LLM_MODEL_FILE` is set — and the quality choice. It needs ~20 GB of free RAM
+for weights — tight on 32 GB once Postgres is also running, and profile A is the
+fallback when RAM is short; 64 GB is the highest-ROI upgrade for this box. For
+MoE offload, **memory bandwidth beats core count** — verify your DDR5 is running
+at its rated speed before blaming the software. The 50-series is Blackwell
+(sm_120): pin a current `ghcr.io/ggml-org/llama.cpp:server-cuda` tag
+(`LLAMA_IMAGE`) or you will silently fall back to slow paths.
 
 A machine with no weights at all can still run everything except `ask`: set
 `embedding.backend: hash` and `llm.backend: echo`, build with
@@ -466,8 +468,10 @@ approximates it before then. And the corpus cannot currently be enlarged from
 adilet: since September 2026 the site serves act text only to browsers running
 its JavaScript and states in its robots policy that corpus-collecting crawlers
 are closed while search and citation stay open. The fetcher now refuses that
-shell instead of saving it as a document. New text has to come from the
-reference bank export (`--source-dir`).
+shell instead of saving it as a document. New text has to come from a
+reference bank export: put the files in a directory, `lawrag pack` it into a
+bundle, and `lawrag ingest` the bundle. (There is no `--source-dir` flag,
+although the fetcher's log message and docstring still name one.)
 
 ---
 
@@ -516,6 +520,74 @@ recall.
   invalidates cached answers and tells you which internal policies need review.
 - `verify_signature()` in `ingest/bundle.py` is a hook, not an implementation.
   Wire it to your key infrastructure; with `--require-signature` it fails closed.
+
+---
+
+## Reference
+
+### CLI
+
+Every command runs as `docker compose run --rm cli <command>` from `docker/`,
+or as `lawrag <command>` from a host interpreter. All of them take `--config`.
+
+| command | what it does |
+| --- | --- |
+| `init-db` | create the schema |
+| `stats` | row counts and unresolved references |
+| `fetch <dir> [--as-of] [--codes] [--langs]` | connected side: download an adilet snapshot (see the note on adilet above) |
+| `pack <src> <out>` | build a bundle with a SHA-256 manifest |
+| `verify-bundle <dir> [--require-signature]` | check a bundle before import; exit 2 on rejection |
+| `ingest <dir> [--reset] [--no-verify] [--no-build-index]` | parse, chunk, extract, embed and index a corpus directory |
+| `context` | optional contextual-retrieval sentences per chunk, cached by content hash |
+| `search "<q>" [--as-of]` | retrieval only, with per-branch scores |
+| `ask "<q>" [--as-of]` | full answer: retrieve, generate, verify citations |
+| `eval [questions.yaml]` | recall@chunk, recall@packet, MRR, abstain accuracy |
+| `calibrate [questions.yaml]` | propose the `retrieval.min_*` relevance floors |
+| `inspect <file> --code --valid-from` | parse one document and print the result; no database |
+| `serve [--host] [--port]` | run the API and console |
+| `train-pairs <dir> [--doc2query]` | mine training pairs from the corpus into `data/train/` |
+| `train --base --out` | contrastive fine-tune of the embedder |
+| `train-eval <model>...` | held-out dense retrieval comparison; no database |
+
+`scripts/resume_ingest.py` finishes an interrupted ingest: `--embed` fills in
+missing embeddings, `--link` aligns RU↔KK chunks, `--index` builds the HNSW
+index; with no flags it only reports.
+
+### HTTP API
+
+Interactive docs at `http://127.0.0.1:8000/docs`.
+
+| endpoint | what it does |
+| --- | --- |
+| `GET /health` | corpus counts, backends, `production_ready` |
+| `POST /ask` | `{question, as_of?, lang?}` → answer with verified citations |
+| `POST /search` | same body plus `include_packet` → ranked hits, optionally the context packet |
+| `GET /article/{act_code}/{number}?as_of=` | point-in-time article lookup, no search |
+| `GET /api/stats`, `/api/metrics` | console dashboards: counts, latency, verification outcomes |
+| `GET /api/releases`, `/api/acts`, `/api/acts/{code}/toc`, `/api/nodes/{id}` | corpus browsing |
+| `GET /api/queries`, `/api/queries/{id}` | the query log |
+| `POST /api/ingest`, `GET /api/ingest/jobs[/{id}]` | console import and its history — the only write |
+
+Access rules are under **Console → Access** above.
+
+---
+
+## Status
+
+As of the last commit (`7e31571`, branch `corpus-split-and-embedder-adaptation`):
+
+- The relevance floors in `config/default.yaml` (0.30 / 0.60 / 0.45) have not
+  been calibrated for bge-m3 on the real corpus — `calibrate` needs a real
+  question set first.
+- There is no question set for `data/adilet` yet; the shipped one targets the
+  synthetic fixture.
+- Only current redactions are stored. Historical text needs one
+  `fetch --as-of` snapshot per date, and adilet no longer serves text to the
+  fetcher.
+- BGE-M3's sparse and ColBERT outputs are unused; retrieval uses the dense
+  vector only. A design choice, not a bug.
+- `verify_signature()` is a hook without an implementation.
+- `LAWRAG_API_TOKEN` is one shared secret; there are no user accounts.
 
 ---
 
@@ -573,8 +645,12 @@ src/lawrag/
     security.py             token / loopback access control
     static/                 the console itself: no build step, no CDN
   cli.py
-data/adilet/                real adilet snapshot (HTML + documents.json)
-tests/                      106 tests; DB-backed ones skip without Postgres
+data/adilet/                real adilet snapshot: 41 documents (HTML) + documents.json
+data/train/                 training pairs from `train-pairs` (git-ignored)
+data/uploads/               console imports and their job.json history (git-ignored)
+models/                     MODEL_DIR: bge-m3/, bge-m3-lawrag/, the reranker,
+                            the .gguf generator (git-ignored, mounted at /models)
+tests/                      107 tests; DB-backed ones skip without Postgres
   fixtures/synthetic/       the invented fixture the suite ingests
   test_regressions.py       one test per defect found in review, each named
                             after the failure it pins down

@@ -157,7 +157,10 @@ def finetune(settings: TrainSettings, pairs: list[Pair], corpus: list[dict], *,
 
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer(settings.base, device=device)
+    # MPS's fused SDPA kernel has no dropout, and the model trains with
+    # attention dropout on: eager attention is the only path that runs there.
+    model_kwargs = {"attn_implementation": "eager"} if device.startswith("mps") else None
+    model = SentenceTransformer(settings.base, device=device, model_kwargs=model_kwargs)
     model.max_seq_length = settings.max_seq_length
     auto_model = model[0].auto_model
     trainable, frozen = _freeze_lower_layers(auto_model, settings.train_layers)

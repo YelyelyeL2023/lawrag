@@ -491,7 +491,7 @@ def train_cmd(pairs: Path = typer.Option(Path("data/train"), help="Directory wri
               train_layers: int = typer.Option(8, help="Top transformer layers to update; 0 = all."),
               hard_negatives: bool = typer.Option(True, help="Mine one hard negative per pair with the base model."),
               max_pairs: Optional[int] = typer.Option(None, help="Cap the training set (time budget)."),
-              device: Optional[str] = typer.Option(None, help="cuda | cpu; auto if omitted."),
+              device: Optional[str] = typer.Option(None, help="cuda | mps | cpu; auto (cuda or cpu) if omitted."),
               config: Optional[str] = ConfigOpt):
     """Fine-tune the embedder on the mined pairs.
 

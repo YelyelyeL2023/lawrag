@@ -12,15 +12,13 @@ answered.
 from __future__ import annotations
 
 import json
-import time
 from typing import Protocol
 
 from ..config import LLMConfig
+from ..gemini_http import post_with_retry, require_api_key
 from ..logging_setup import get_logger
 
 log = get_logger(__name__)
-
-RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 class LLM(Protocol):
@@ -56,10 +54,6 @@ class EchoLLM:
         )
 
 
-class MissingApiKeyError(ValueError):
-    """The gemini backend was selected without LAWRAG_LLM_API_KEY."""
-
-
 class GeminiLLM:
     """Gemini via its OpenAI-compatible chat completions endpoint."""
 
@@ -68,10 +62,7 @@ class GeminiLLM:
     def __init__(self, cfg: LLMConfig) -> None:
         import httpx
 
-        if not cfg.api_key:
-            raise MissingApiKeyError(
-                "llm.backend is 'gemini' but no API key is set; "
-                "export LAWRAG_LLM_API_KEY")
+        require_api_key(cfg.api_key, "LAWRAG_LLM_API_KEY")
         self.cfg = cfg
         self._client = httpx.Client(
             base_url=cfg.base_url.rstrip("/"),
@@ -88,29 +79,10 @@ class GeminiLLM:
             "max_tokens": max_tokens,
             "stream": False,
         }
-        data = self._post_with_retry("/chat/completions", payload)
+        data = post_with_retry(self._client, "/chat/completions", payload,
+                               max_retries=self.cfg.max_retries,
+                               backoff_s=self.cfg.retry_backoff_s)
         return data["choices"][0]["message"]["content"]
-
-    def _post_with_retry(self, path: str, payload: dict) -> dict:
-        import httpx
-
-        for attempt in range(self.cfg.max_retries + 1):
-            last = attempt == self.cfg.max_retries
-            try:
-                resp = self._client.post(path, json=payload)
-                if resp.status_code not in RETRYABLE_STATUS or last:
-                    resp.raise_for_status()
-                    return resp.json()
-                reason = f"HTTP {resp.status_code}"
-            except httpx.TimeoutException:
-                if last:
-                    raise
-                reason = "timeout"
-            delay = self.cfg.retry_backoff_s * 2 ** attempt
-            log.warning("gemini %s, retry %d/%d in %.0fs",
-                        reason, attempt + 1, self.cfg.max_retries, delay)
-            time.sleep(delay)
-        raise AssertionError("unreachable")
 
 
 def build_llm(cfg: LLMConfig) -> LLM:

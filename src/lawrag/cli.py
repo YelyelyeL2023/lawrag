@@ -518,7 +518,7 @@ def train_cmd(pairs: Path = typer.Option(Path("data/train"), help="Directory wri
 
 
 @app.command("train-eval")
-def train_eval_cmd(models: list[Path] = typer.Argument(..., help="One or more model directories to compare."),
+def train_eval_cmd(models: list[Path] = typer.Argument(..., help="Model directories to compare; `gemini` for the hosted gemini-embedding-2."),
                    pairs: Path = typer.Option(Path("data/train"), help="Directory written by train-pairs."),
                    split: str = typer.Option("dev", help="dev | train"),
                    max_queries: Optional[int] = typer.Option(2000, help="Sample this many queries, balanced by kind."),
@@ -533,11 +533,11 @@ def train_eval_cmd(models: list[Path] = typer.Argument(..., help="One or more mo
     from .train.evaluate import evaluate, print_results, save_results
     from .train.pairs import read_jsonl, read_pairs
 
-    _cfg(config)
+    cfg = _cfg(config)
     dev = read_pairs(pairs / f"pairs.{split}.jsonl")
     corpus = read_jsonl(pairs / "corpus.jsonl")
     results = [evaluate(m, dev, corpus, device=device, cache_dir=pairs / "cache",
-                        max_queries=max_queries) for m in models]
+                        max_queries=max_queries, embedding_cfg=cfg.embedding) for m in models]
     print_results(results, console)
     if out:
         save_results(out, results)

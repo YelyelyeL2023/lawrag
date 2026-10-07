@@ -8,7 +8,8 @@ import httpx
 import pytest
 
 from lawrag.config import LLMConfig
-from lawrag.generate.llm import GeminiLLM, MissingApiKeyError, build_llm
+from lawrag.gemini_http import MissingApiKeyError
+from lawrag.generate.llm import GeminiLLM, build_llm
 
 API_KEY = "test-key"
 MODEL = "gemini-test"
@@ -76,3 +77,31 @@ def test_gemini_does_not_retry_a_client_error():
     with pytest.raises(httpx.HTTPStatusError):
         llm.complete("вопрос")
     assert calls == [404]
+
+
+def test_gemini_embedder_formats_tasks_truncates_and_normalises():
+    from lawrag.config import EmbeddingConfig
+    from lawrag.index.embed import GeminiEmbedder
+
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent.append({"path": request.url.path, "key": request.headers["x-goog-api-key"], **body})
+        return httpx.Response(200, json={"embeddings": [{"values": [3.0, 4.0]} for _ in body["requests"]]})
+
+    cfg = EmbeddingConfig(backend="gemini", api_key=API_KEY, dim=2, api_batch_size=2)
+    emb = GeminiEmbedder(cfg)
+    emb._client = httpx.Client(base_url=cfg.api_base_url, transport=httpx.MockTransport(handler),
+                               headers={"x-goog-api-key": API_KEY})
+
+    vectors = emb.encode(["a", "b", "c"], is_query=True)
+
+    assert vectors.shape == (3, 2)
+    assert vectors[0].tolist() == pytest.approx([0.6, 0.8])
+    assert [len(s["requests"]) for s in sent] == [2, 1]
+    first = sent[0]["requests"][0]
+    assert sent[0]["path"].endswith("/models/gemini-embedding-2:batchEmbedContents")
+    assert sent[0]["key"] == API_KEY
+    assert first["output_dimensionality"] == 2
+    assert first["content"]["parts"][0]["text"] == "task: search result | query: a"

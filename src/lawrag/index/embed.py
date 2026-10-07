@@ -7,6 +7,11 @@ free stand-in so that a fresh clone can run and be tested end-to-end with no
 model weights present — useful on the connected side, in CI, and when
 diagnosing whether a retrieval problem is the pipeline or the model.
 
+``gemini`` is the hosted ``gemini-embedding-2`` model. It exists as the
+commercial-API baseline the fine-tuned bge-m3 is compared against
+(``lawrag train-eval gemini ...``); as a production backend it sends every
+chunk and every query to Google.
+
 The hash backend is a real bag-of-features model, not random noise: it hashes
 word tokens and character trigrams into buckets with sublinear term weighting.
 It retrieves sensibly on small corpora and badly on large ones, which is the
@@ -23,6 +28,7 @@ from typing import Protocol, Sequence
 import numpy as np
 
 from ..config import EmbeddingConfig
+from ..gemini_http import post_with_retry, require_api_key
 from ..logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -135,6 +141,51 @@ class BGEM3Embedder:
         return vectors
 
 
+class GeminiEmbedder:
+    """gemini-embedding-2 over batchEmbedContents, truncated to ``cfg.dim``.
+
+    The model takes no task_type parameter; the task goes into the text, in
+    Google's asymmetric retrieval format (query prefix vs. document header).
+    """
+
+    QUERY_TEMPLATE = "task: search result | query: {text}"
+    DOCUMENT_TEMPLATE = "title: none | text: {text}"
+
+    def __init__(self, cfg: EmbeddingConfig) -> None:
+        import httpx
+
+        api_key = require_api_key(cfg.api_key, "LAWRAG_EMBEDDING_API_KEY")
+        self.cfg = cfg
+        self.dim = cfg.dim
+        self.name = f"gemini-{cfg.api_model}-{cfg.dim}"
+        self._model_ref = f"models/{cfg.api_model}"
+        self._client = httpx.Client(
+            base_url=cfg.api_base_url.rstrip("/"),
+            timeout=cfg.timeout_s,
+            headers={"x-goog-api-key": api_key},
+        )
+
+    def encode(self, texts: Sequence[str], is_query: bool = False) -> np.ndarray:
+        template = self.QUERY_TEMPLATE if is_query else self.DOCUMENT_TEMPLATE
+        size = self.cfg.api_batch_size
+        rows = [self._embed_batch([template.format(text=t) for t in texts[i:i + size]])
+                for i in range(0, len(texts), size)]
+        out = np.vstack(rows) if rows else np.zeros((0, self.dim), dtype=np.float32)
+        norms = np.linalg.norm(out, axis=1, keepdims=True)
+        return out / np.where(norms == 0, 1.0, norms)
+
+    def _embed_batch(self, texts: list[str]) -> np.ndarray:
+        payload = {"requests": [
+            {"model": self._model_ref, "content": {"parts": [{"text": t}]},
+             "output_dimensionality": self.dim}
+            for t in texts
+        ]}
+        data = post_with_retry(self._client, f"/{self._model_ref}:batchEmbedContents", payload,
+                               max_retries=self.cfg.max_retries,
+                               backoff_s=self.cfg.retry_backoff_s)
+        return np.asarray([e["values"] for e in data["embeddings"]], dtype=np.float32)
+
+
 class SentenceTransformerEmbedder:
     """Generic fallback for any local sentence-transformers model."""
 
@@ -165,6 +216,8 @@ def build_embedder(cfg: EmbeddingConfig) -> Embedder:
         return HashEmbedder(cfg.dim)
     if backend in ("bge-m3", "bgem3"):
         return BGEM3Embedder(cfg)
+    if backend == "gemini":
+        return GeminiEmbedder(cfg)
     if backend in ("sentence-transformers", "st"):
         return SentenceTransformerEmbedder(cfg)
     raise ValueError(f"unknown embedding backend: {cfg.backend}")

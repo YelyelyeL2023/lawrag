@@ -62,6 +62,16 @@ class EmbeddingConfig:
     max_length: int = 4096
     device: str = "cuda"
     normalize: bool = True
+    # Only for backend "gemini" (hosted embeddings). Secret: LAWRAG_EMBEDDING_API_KEY.
+    api_model: str = "gemini-embedding-2"
+    api_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    api_key: str = ""
+    api_batch_size: int = 100
+    timeout_s: int = 120
+    # Embedding quotas are per minute, so a 429 needs a longer wait than an
+    # overloaded generator does.
+    max_retries: int = 6
+    retry_backoff_s: float = 2.0
 
 
 @dataclass

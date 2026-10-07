@@ -10,6 +10,10 @@ This measures the dense branch alone. The production retriever also runs the
 lexical and citation branches, fusion, the relevance floor and the reranker,
 so absolute numbers here are lower than end-to-end recall; the *difference*
 between two embedders on the same corpus and queries is what it is for.
+
+The model argument ``gemini`` selects the hosted gemini-embedding-2
+(``embedding.api_*`` settings) instead of a local directory, as the
+commercial-API baseline.
 """
 
 from __future__ import annotations
@@ -22,10 +26,17 @@ from typing import Sequence
 
 import numpy as np
 
+from ..config import EmbeddingConfig
+from ..index.embed import GeminiEmbedder
 from ..logging_setup import get_logger
 from .pairs import Pair
 
 log = get_logger(__name__)
+
+GEMINI_MODEL = "gemini"
+# Corpus encoding is saved every this many rows, so an interrupted run over a
+# paid API resumes instead of paying for the same chunks twice.
+CHECKPOINT_ROWS = 2000
 
 
 @dataclass(slots=True)
@@ -110,7 +121,17 @@ def load_model(model_path: str | Path, device: str | None = None, max_seq_length
     return model
 
 
-def encode(model, texts: Sequence[str], batch_size: int = 32) -> np.ndarray:
+def load_encoder(model_path: str | Path, device: str | None,
+                 embedding_cfg: EmbeddingConfig | None):
+    if str(model_path) == GEMINI_MODEL:
+        return GeminiEmbedder(embedding_cfg or EmbeddingConfig())
+    return load_model(model_path, device)
+
+
+def encode(model, texts: Sequence[str], batch_size: int = 32,
+           is_query: bool = False) -> np.ndarray:
+    if isinstance(model, GeminiEmbedder):
+        return model.encode(texts, is_query=is_query)
     return np.asarray(
         model.encode(list(texts), batch_size=batch_size, normalize_embeddings=True,
                      convert_to_numpy=True, show_progress_bar=False),
@@ -126,19 +147,35 @@ def encode_corpus(model, model_path: str | Path, texts: Sequence[str],
     an hour on a CPU; hard-negative mining and evaluation both need it, and
     both are re-run far more often than the corpus changes.
     """
-    if cache_dir is not None:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache = cache_dir / f"emb.{_tag(model_path)}.{corpus_digest(texts)}.npy"
-        if cache.exists():
-            emb = np.load(cache)
-            if emb.shape[0] == len(texts):
-                log.info("corpus embeddings from cache %s", cache.name)
-                return emb
-    log.info("encoding %d corpus chunks with %s", len(texts), _tag(model_path))
-    emb = encode(model, texts, batch_size=batch_size)
-    if cache_dir is not None:
-        np.save(cache, emb)
+    tag = model.name if isinstance(model, GeminiEmbedder) else _tag(model_path)
+    if cache_dir is None:
+        log.info("encoding %d corpus chunks with %s", len(texts), tag)
+        return encode(model, texts, batch_size=batch_size)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache = cache_dir / f"emb.{tag}.{corpus_digest(texts)}.npy"
+    if cache.exists():
+        emb = np.load(cache)
+        if emb.shape[0] == len(texts):
+            log.info("corpus embeddings from cache %s", cache.name)
+            return emb
+    log.info("encoding %d corpus chunks with %s", len(texts), tag)
+    emb = _encode_checkpointed(model, texts, batch_size, cache.with_suffix(".partial.npy"))
+    np.save(cache, emb)
+    cache.with_suffix(".partial.npy").unlink(missing_ok=True)
     return emb
+
+
+def _encode_checkpointed(model, texts: Sequence[str], batch_size: int,
+                         partial: Path) -> np.ndarray:
+    blocks = [np.load(partial)] if partial.exists() else []
+    done = sum(len(b) for b in blocks)
+    if done:
+        log.info("resuming corpus encoding at %d/%d", done, len(texts))
+    for start in range(done, len(texts), CHECKPOINT_ROWS):
+        blocks.append(encode(model, texts[start:start + CHECKPOINT_ROWS], batch_size=batch_size))
+        np.save(partial, np.vstack(blocks))
+        log.info("encoded %d/%d", min(start + CHECKPOINT_ROWS, len(texts)), len(texts))
+    return np.vstack(blocks)
 
 
 # ------------------------------------------------------------- evaluate --
@@ -146,7 +183,7 @@ def encode_corpus(model, model_path: str | Path, texts: Sequence[str],
 def evaluate(model_path: str | Path, pairs: list[Pair], corpus: list[dict], *,
              device: str | None = None, cache_dir: Path | None = None,
              batch_size: int = 32, max_queries: int | None = None,
-             seed: int = 13) -> EvalResult:
+             seed: int = 13, embedding_cfg: EmbeddingConfig | None = None) -> EvalResult:
     import random
 
     if max_queries is not None and len(pairs) > max_queries:
@@ -157,7 +194,7 @@ def evaluate(model_path: str | Path, pairs: list[Pair], corpus: list[dict], *,
         share = max(1, max_queries // max(1, len(by_kind)))
         pairs = [p for items in by_kind.values() for p in rng.sample(items, min(share, len(items)))]
 
-    model = load_model(model_path, device)
+    model = load_encoder(model_path, device, embedding_cfg)
     texts = [c["text"] for c in corpus]
     keys = [(c["article"], c["lang"]) for c in corpus]
     doc_emb = encode_corpus(model, model_path, texts, cache_dir, batch_size)
@@ -167,7 +204,7 @@ def evaluate(model_path: str | Path, pairs: list[Pair], corpus: list[dict], *,
     all_ranks: list[np.ndarray] = []
     for kind in sorted({p.kind for p in pairs}):
         items = [p for p in pairs if p.kind == kind]
-        q_emb = encode(model, [p.query for p in items], batch_size=batch_size)
+        q_emb = encode(model, [p.query for p in items], batch_size=batch_size, is_query=True)
         scores = q_emb @ doc_emb.T
         # A cross-language query is the other language's text of the same
         # node, which trivially ranks first; rank it among the target language

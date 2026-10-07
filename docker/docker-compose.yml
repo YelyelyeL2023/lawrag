@@ -78,6 +78,8 @@ services:
       LAWRAG_EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
       LAWRAG_RERANK_DEVICE: ${RERANK_DEVICE:-cpu}
       LAWRAG_LLM_API_KEY: ${LAWRAG_LLM_API_KEY:-}
+      # Same Google key; used only by the `gemini` embedding backend / train-eval baseline.
+      LAWRAG_EMBEDDING_API_KEY: ${LAWRAG_LLM_API_KEY:-}
       LAWRAG_LOG_LEVEL: ${LAWRAG_LOG_LEVEL:-INFO}
       # Access control (api/security.py). The port below is published on the
       # host's 127.0.0.1 only, but requests arrive from the Docker bridge, so

@@ -602,12 +602,10 @@ function renderAnswer(out) {
       h('div',
         h('strong', 'Генератор не запущен. '),
         'Нормы найдены и приведены ниже, но сформулировать ответ не удалось: ',
-        'на порту генератора никто не слушает.',
+        'Gemini API недоступен.',
         h('div', { style: 'margin-top:7px' },
-          'Запустите генератор из каталога ', h('span.mono', 'docker/'), ': ',
-          h('span.mono', 'docker compose --profile llm up -d llm'),
-          ' (профили A/B — ', h('span.mono', 'docker/scripts/serve_llm.*'),
-          '), затем повторите вопрос.'),
+          'Проверьте доступ в интернет и ключ ', h('span.mono', 'LAWRAG_LLM_API_KEY'),
+          ', затем повторите вопрос.'),
         h('div', { style: 'margin-top:5px' },
           h('span.dim', { title: a.abstain_reason }, a.abstain_reason)))));
   }
@@ -620,9 +618,9 @@ function renderAnswer(out) {
         'Нормы найдены и приведены ниже; ответ не формулируется, потому что ',
         h('span.mono', 'llm.backend'), ' = ', h('span.mono', 'echo'), '.',
         h('div', { style: 'margin-top:7px' },
-          'Для ответов: ', h('span.mono', 'llm.backend: llamacpp'), ' в ',
-          h('span.mono', 'config/default.yaml'), ' (или ', h('span.mono', 'LAWRAG_LLM_BACKEND=llamacpp'),
-          ') и запущенный генератор — ', h('span.mono', 'docker compose --profile llm up -d llm'), '.'))));
+          'Для ответов: ', h('span.mono', 'llm.backend: gemini'), ' в ',
+          h('span.mono', 'config/default.yaml'), ' (или ', h('span.mono', 'LAWRAG_LLM_BACKEND=gemini'),
+          ') и ключ API в ', h('span.mono', 'LAWRAG_LLM_API_KEY'), '.'))));
   }
 
   if (a.verification_problems && a.verification_problems.length) {
@@ -1237,9 +1235,7 @@ async function viewMonitor(root) {
         h('span.mono', rt.llm.base_url || rt.llm_base_url || '—'),
         ' нет соединения.',
         h('div', { style: 'margin-top:7px' },
-          'Запустите генератор из каталога ', h('span.mono', 'docker/'), ': ',
-          h('span.mono', 'docker compose --profile llm up -d llm'),
-          ' (профиль B по умолчанию; A/B — ', h('span.mono', 'docker/scripts/serve_llm.*'), ').'),
+          'Проверьте доступ в интернет и ключ ', h('span.mono', 'LAWRAG_LLM_API_KEY'), '.'),
         rt.llm.error ? h('div', { style: 'margin-top:5px' },
           h('span.dim', rt.llm.error)) : null)));
   } else {

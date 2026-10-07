@@ -1,7 +1,7 @@
 # Host-interpreter run on placeholder models: no weights on disk, no CUDA.
 #
 # config/default.yaml names the production backends (bge-m3, the bge reranker,
-# llama-server). This file runs the same pipeline from a host Python against
+# Gemini). This file runs the same pipeline from a host Python against
 # the compose database (published on 127.0.0.1:5433) on the deterministic hash
 # embedder and the echo LLM. Retrieval is fully functional; `ask` abstains with
 # no_model_loaded. The test suite pins the same placeholders.

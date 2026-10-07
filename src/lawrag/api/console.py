@@ -127,10 +127,10 @@ def _missing_modules(c: Config) -> list[dict]:
     return missing
 
 
-# The generator is a separate process (llama-server), so "configured" and
-# "running" are yet another pair of facts that must not be conflated: a
-# perfectly loaded embedder and a dead llama-server produce an abstention with
-# WinError 10061 buried in it, which reads like a corpus problem and is not.
+# The generator is a remote API (Gemini), so "configured" and "reachable" are
+# yet another pair of facts that must not be conflated: a perfectly loaded
+# embedder and no route to the API (or a rejected key) produce an abstention
+# with a connection error buried in it, which reads like a corpus problem.
 _LLM_PROBE_TTL_S = 20.0
 _llm_probe: dict = {"at": 0.0, "value": None}
 

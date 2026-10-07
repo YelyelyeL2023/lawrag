@@ -8,7 +8,6 @@
 #   cd docker
 #   docker compose up -d                       db + api + console
 #   docker compose run --rm cli stats          any CLI command
-#   docker compose --profile llm up -d llm     the local generator
 #
 # On the air-gapped machine, load every image from a saved tarball
 # (docker save / docker load) rather than pulling.
@@ -78,7 +77,7 @@ services:
       LAWRAG_RERANK_MODEL_PATH: /models/bge-reranker-v2-m3
       LAWRAG_EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
       LAWRAG_RERANK_DEVICE: ${RERANK_DEVICE:-cpu}
-      LAWRAG_LLM_BASE_URL: http://llm:8080/v1
+      LAWRAG_LLM_API_KEY: ${LAWRAG_LLM_API_KEY:-}
       LAWRAG_LOG_LEVEL: ${LAWRAG_LOG_LEVEL:-INFO}
       # Access control (api/security.py). The port below is published on the
       # host's 127.0.0.1 only, but requests arrive from the Docker bridge, so
@@ -154,40 +153,6 @@ services:
     healthcheck:
       disable: true
     profiles: ["tests"]
-
-  # --------------------------------------------------------------- llm --
-  # The generator, as a service rather than a binary someone remembered to
-  # start. Profile A (dense 9B) and Profile B (35B MoE) differ only by the two
-  # variables below — see .env.example.
-  #
-  #   docker compose --profile llm up -d llm
-  #
-  # This is the CPU image; the GPU overlay swaps in :server-cuda.
-  llm:
-    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
-    container_name: lawrag-llm
-    volumes:
-      - ${MODEL_DIR:-../models}:/models:ro
-    ports:
-      - "127.0.0.1:${LLM_HOST_PORT:-8080}:8080"
-    command: >
-      --model /models/${LLM_MODEL_FILE:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}
-      --host 0.0.0.0 --port 8080
-      --n-gpu-layers ${LLM_GPU_LAYERS:-999}
-      --n-cpu-moe ${LLM_N_CPU_MOE:-28}
-      --ctx-size ${LLM_CTX_SIZE:-32768}
-      --cache-type-k q8_0 --cache-type-v q8_0
-      --flash-attn on
-      --temp 0.0
-      --jinja
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 120s
-    restart: unless-stopped
-    profiles: ["llm"]
 
   # --------------------------------------------- model download (online) --
   # Runs on the CONNECTED side only. Fetches BGE-M3 + the reranker into

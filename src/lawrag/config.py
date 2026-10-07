@@ -75,16 +75,21 @@ class RerankConfig:
 
 @dataclass
 class LLMConfig:
-    backend: str = "echo"          # echo | llamacpp
-    base_url: str = "http://127.0.0.1:8080/v1"
-    model: str = "qwen3.5-9b-q4_k_m"
-    api_key: str = "not-needed"
+    backend: str = "echo"          # echo | gemini
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    model: str = "gemini-3.8-flash"
+    # Secret: set LAWRAG_LLM_API_KEY, never the YAML.
+    api_key: str = ""
     temperature: float = 0.0
     max_tokens: int = 1200
-    timeout_s: int = 180
-    # A second, smaller model used for the offline batch job that writes one
-    # context sentence per chunk. Runs overnight; quality bar is low.
-    context_model: str = "qwen3.5-4b-q4_k_m"
+    # Per attempt. An overloaded Gemini model hangs rather than refusing, so a
+    # long timeout times retries makes a dead request look like a slow answer.
+    timeout_s: int = 60
+    max_retries: int = 2
+    retry_backoff_s: float = 2.0
+    # Model for the offline batch job that writes one context sentence per
+    # chunk; the quality bar is low.
+    context_model: str = "gemini-3.8-flash"
 
 
 @dataclass

@@ -34,7 +34,7 @@ Write-Host '    docker compose run --rm cli search "В какой срок ну�
 Write-Host '    docker compose run --rm cli search "Какой штраф за просрочку?" --as-of 2025-03-15'
 Write-Host '    docker compose run --rm cli ask    "Продлевается ли срок для малого бизнеса?"'
 Write-Host ""
-Write-Host 'ask needs the generator: docker compose --profile llm up -d llm'
+Write-Host 'ask needs a Gemini API key: set LAWRAG_LLM_API_KEY in docker\.env'
 Write-Host ""
 Write-Host 'cli eval runs questions.sample.yaml, written against the synthetic test fixture, not this corpus.'
 Write-Host 'Write a question set for data/adilet first; docker compose run --rm tests exercises the fixture set.'

@@ -19,7 +19,7 @@ cat <<'MSG'
 
 Carry the MODEL_DIR tree across the air gap, together with the images:
 
-    docker save lawrag:models pgvector/pgvector:pg16 ghcr.io/ggml-org/llama.cpp:server-cuda \
+    docker save lawrag:models pgvector/pgvector:pg16 \
       | gzip > lawrag-images.tar.gz
 
 On the target: docker load < lawrag-images.tar.gz, put the tree at MODEL_DIR,

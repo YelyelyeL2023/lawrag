@@ -4,8 +4,10 @@ Retrieval-augmented lookup over the Constitution and Codes of the Republic of
 Kazakhstan, for compliance staff without legal training, on a fully air-gapped
 machine.
 
-Everything runs locally. The corpus arrives as signed offline snapshot bundles;
-no query-path code makes an outbound network call.
+Everything runs locally except answer generation. The corpus arrives as signed
+offline snapshot bundles; retrieval makes no outbound network call. `ask` calls
+the Gemini API, so the question and the retrieved statutory text leave the
+machine — `search` does not.
 
 > **Two corpora, kept apart.** `data/adilet/` is a real snapshot of adilet.zan.kz
 > (fetched 2026-09-08). `tests/fixtures/synthetic/` is an **invented** fixture the
@@ -62,11 +64,10 @@ go through identical code.
 | `app` | — | the HTTP API and the browser console, on `127.0.0.1:8000` |
 | `cli` | `cli` | one-shot `lawrag` commands: ingest, search, ask, stats, eval |
 | `tests` | `tests` | pytest, against a live `db` |
-| `llm` | `llm` | llama-server with the local generator |
 | `download-models` | `download` | fetches the weights — connected side only |
 
 Two image targets, because the weights stack dwarfs everything else: `runtime`
-(~390 MB — CLI, API, ingest, retrieval, a llama.cpp client) and `models`
+(~390 MB — CLI, API, ingest, retrieval, the Gemini client) and `models`
 (~10 GB, adding torch + FlagEmbedding for bge-m3 and the reranker).
 `LAWRAG_TARGET` in `docker/.env` picks one; it defaults to `models`, because the
 shipped config asks for bge-m3.
@@ -90,7 +91,7 @@ Container Toolkit (Docker Desktop provides it on WSL2 with a current driver).
 
 ```bash
 docker compose build app
-docker save lawrag:models pgvector/pgvector:pg16 ghcr.io/ggml-org/llama.cpp:server-cuda -o lawrag-images.tar
+docker save lawrag:models pgvector/pgvector:pg16 -o lawrag-images.tar
 ```
 
 Carry that tarball and the `MODEL_DIR` tree across; `docker load -i
@@ -243,7 +244,7 @@ adilet / reference-bank export        [connected side]
   hydrate: parent article · referenced norms · definitions   (1 hop)
         │
         ▼
-  context packet  ──▶  local LLM  ──▶  citation verification  ──▶  answer + audit log
+  context packet  ──▶  Gemini API ──▶  citation verification  ──▶  answer + audit log
 ```
 
 ---
@@ -343,37 +344,21 @@ server ignored the date.
 Hardware assumed: 8 GB VRAM, 32 GB RAM, high-core CPU.
 
 The backends in `config/default.yaml` are already the production ones — bge-m3,
-the bge reranker, and llama.cpp. What they need is the weights, in `MODEL_DIR`
+the bge reranker, and Gemini. The two local models need weights, in `MODEL_DIR`
 on the host, mounted at `/models` in every container:
 
 ```bash
 docker/scripts/download_models.sh        # connected side; Windows: docker\scripts\download_models.ps1
 ```
 
-That lands `bge-m3/` and `bge-reranker-v2-m3/` under `MODEL_DIR`; put the
-`.gguf` generator file beside them. The download runs in the same `models` image
-that will later load the weights, so what is fetched is what is loaded.
+That lands `bge-m3/` and `bge-reranker-v2-m3/` under `MODEL_DIR`. The download
+runs in the same `models` image that will later load the weights, so what is
+fetched is what is loaded.
 
-```bash
-docker/scripts/serve_llm.sh           # profile B (the default)
-docker/scripts/serve_llm.sh A         # Qwen3.5-9B Q4_K_M, full GPU offload, ~50 tok/s
-docker/scripts/serve_llm.sh B         # Qwen3.6-35B-A3B, MoE experts in RAM, ~30 tok/s
-docker/scripts/serve_llm.sh B --cpu   # no card: CPU image, all layers on the CPU
-```
-
-Both scripts are wrappers around `docker compose --profile llm up -d llm`: the
-profile differs only in `LLM_MODEL_FILE` and `LLM_N_CPU_MOE`, so switching
-models is a variable, not a rebuild. Nothing in the generator path is installed
-on the host — there is no `llama-server.exe` to put on `PATH`.
-
-Profile B is the default — in the script, and in `docker-compose.yml` when no
-`LLM_MODEL_FILE` is set — and the quality choice. It needs ~20 GB of free RAM
-for weights — tight on 32 GB once Postgres is also running, and profile A is the
-fallback when RAM is short; 64 GB is the highest-ROI upgrade for this box. For
-MoE offload, **memory bandwidth beats core count** — verify your DDR5 is running
-at its rated speed before blaming the software. The 50-series is Blackwell
-(sm_120): pin a current `ghcr.io/ggml-org/llama.cpp:server-cuda` tag
-(`LLAMA_IMAGE`) or you will silently fall back to slow paths.
+The generator is Gemini (`llm.model`, default `gemini-3.8-flash`), called over
+its OpenAI-compatible endpoint. Set `LAWRAG_LLM_API_KEY` in `docker/.env`; the
+key is never read from the YAML. `GET /api/stats` probes the endpoint and the
+console raises a banner when it is unreachable or the key is rejected.
 
 A machine with no weights at all can still run everything except `ask`: set
 `embedding.backend: hash` and `llm.backend: echo`, build with
@@ -408,7 +393,7 @@ this corpus. There is no labelled data, so the corpus is its own supervision
 | `xref` | the sentence that cites article B, **with the citation cut out** | article B | meaning, not numbers: "в порядке, установленном ___" must find the registration article without "статьей 76" to match on |
 | `xlang` | the Russian text of a node | its Kazakh text (and back) | the two legal vocabularies land in one space, so a Kazakh question finds the Russian article |
 | `definition` | a defined term, bare and as a question | the definition | glossary lookups |
-| `doc2query` | questions the local LLM writes per chunk (`--doc2query`) | the chunk | realistic phrasing; cached by content hash |
+| `doc2query` | questions the LLM writes per chunk (`--doc2query`) | the chunk | realistic phrasing; cached by content hash |
 | `querylog` | real questions whose every citation passed verification | the cited article | what users ask — the only kind that is not derived from the text itself |
 
 ```bash
@@ -597,13 +582,12 @@ As of the last commit (`7e31571`, branch `corpus-split-and-embedder-adaptation`)
 docker/                     everything Docker-specific, and nothing else is
   Dockerfile                two targets: runtime (no weights stack) and models
   Dockerfile.dockerignore   build-context hygiene (BuildKit per-Dockerfile ignore)
-  docker-compose.yml        db, api, cli, tests, llm, model download
-  docker-compose.gpu.yml    GPU overlay — device reservations, the CUDA llama.cpp
+  docker-compose.yml        db, api, cli, tests, model download
+  docker-compose.gpu.yml    GPU overlay — device reservations for the embedder
   .env.example              this machine: weights dir, ports, image target
   scripts/
     bootstrap.*             clean clone to a working system, in containers
     download_models.*       connected-side weight fetch, in a container
-    serve_llm.*             generator profiles A/B as compose variables
 config/default.yaml         every knob, with the reasoning next to it
 config/local.yaml           host interpreter, placeholder models
 config/host-gpu.yaml        host interpreter, fine-tuned embedder on CUDA
@@ -648,8 +632,8 @@ src/lawrag/
 data/adilet/                real adilet snapshot: 41 documents (HTML) + documents.json
 data/train/                 training pairs from `train-pairs` (git-ignored)
 data/uploads/               console imports and their job.json history (git-ignored)
-models/                     MODEL_DIR: bge-m3/, bge-m3-lawrag/, the reranker,
-                            the .gguf generator (git-ignored, mounted at /models)
+models/                     MODEL_DIR: bge-m3/, bge-m3-lawrag/, the reranker
+                            (git-ignored, mounted at /models)
 tests/                      107 tests; DB-backed ones skip without Postgres
   fixtures/synthetic/       the invented fixture the suite ingests
   test_regressions.py       one test per defect found in review, each named

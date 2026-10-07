@@ -27,28 +27,25 @@ Two image targets:
 | target | size | what it carries |
 | --- | --- | --- |
 | `models` (default) | ~10 GB | adds torch + FlagEmbedding — needed by the bge-m3 backends in `config/default.yaml` |
-| `runtime` | ~390 MB | ingest, retrieval over the hash embedder, the console, a llama.cpp HTTP client |
+| `runtime` | ~390 MB | ingest, retrieval over the hash embedder, the console, the Gemini HTTP client |
 
 ---
 
 ## Path A — the full system (with weights)
 
-This is the real thing: bge-m3 embeddings, the reranker, a local generator,
+This is the real thing: bge-m3 embeddings, the reranker, Gemini as the generator,
 and `ask` that actually answers.
 
 ```bash
 # 1. weights — CONNECTED side only, several GB, the one step that uses network
 docker/scripts/download_models.sh
 #    lands models/bge-m3 and models/bge-reranker-v2-m3
-#    put the generator's .gguf file beside them
 
 # 2. everything else: build, database, ingest, console
 docker/scripts/bootstrap.sh              # Windows: docker\scripts\bootstrap.ps1
 
-# 3. the generator (needed only by `ask`)
-docker/scripts/serve_llm.sh              # profile B, the default
-docker/scripts/serve_llm.sh A            # smaller, when RAM is short
-docker/scripts/serve_llm.sh B --cpu      # no GPU
+# 3. the generator (needed only by `ask`): a Gemini API key in docker/.env
+#    LAWRAG_LLM_API_KEY=...       `ask` sends the question and retrieved text to Google
 
 # 4. re-tune the relevance floor for this embedder, then re-measure
 cd docker

@@ -37,9 +37,7 @@ Ready.  Console: http://127.0.0.1:8000/   API docs: http://127.0.0.1:8000/docs
     docker compose run --rm cli search "Какой штраф за просрочку?" --as-of 2025-03-15
     docker compose run --rm cli ask    "Продлевается ли срок для малого бизнеса?"
 
-`ask` needs the generator running and the weights mounted:
-
-    docker compose --profile llm up -d llm      (see README, "Models")
+`ask` needs a Gemini API key: set LAWRAG_LLM_API_KEY in docker/.env.
 
 `cli eval` runs src/lawrag/evalkit/questions.sample.yaml, which is written
 against the synthetic test fixture, not this corpus. Write a question set for

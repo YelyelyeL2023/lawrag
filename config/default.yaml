@@ -36,11 +36,11 @@ rerank:
   top_k_out: 8
 
 llm:
-  backend: llamacpp      # production (was: echo)
-  # llama-server's OpenAI-compatible endpoint; deployments set LAWRAG_LLM_BASE_URL.
-  base_url: http://127.0.0.1:8080/v1
-  model: qwen3.6-35b-a3b-q4_k_m   # Profile B (MoE); label only, llama-server serves the loaded gguf
-  context_model: qwen3.5-4b-q4_k_m
+  backend: gemini        # production (was: echo)
+  # Gemini's OpenAI-compatible endpoint. The key comes from LAWRAG_LLM_API_KEY only.
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: gemini-3.8-flash
+  context_model: gemini-3.8-flash
   temperature: 0.0
 
 chunking:

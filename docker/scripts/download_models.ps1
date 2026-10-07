@@ -17,4 +17,4 @@ docker compose --profile download run --rm download-models @args
 
 Write-Host ""
 Write-Host "Carry the MODEL_DIR tree across the air gap together with the images:"
-Write-Host "    docker save lawrag:models pgvector/pgvector:pg16 ghcr.io/ggml-org/llama.cpp:server-cuda -o lawrag-images.tar"
+Write-Host "    docker save lawrag:models pgvector/pgvector:pg16 -o lawrag-images.tar"

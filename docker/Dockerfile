@@ -3,7 +3,7 @@
 # Two targets, because the weights stack is ~25x larger than everything else and
 # most of the pipeline does not need it:
 #
-#   runtime            — CLI, API, console, ingest, retrieval, llama.cpp client.
+#   runtime            — CLI, API, console, ingest, retrieval, Gemini client.
 #                        ~390 MB. Enough for a machine whose config uses the
 #                        placeholder embedder or a remote embedding service.
 #   models   (default) — runtime plus torch + FlagEmbedding, for bge-m3 and the

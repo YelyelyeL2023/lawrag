@@ -40,13 +40,3 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-
-  llm:
-    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]

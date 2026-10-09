@@ -1,0 +1,40 @@
+# Demo run on the macOS host (Apple Silicon): real bge-m3 embeddings and the
+# bge reranker on MPS against the compose database on 127.0.0.1:5433.
+#
+#   LAWRAG_CONFIG=config/demo.yaml .venv/bin/lawrag search "..."
+#
+# llm.backend is echo: the API builds the LLM client even for /search, so a
+# gemini backend without a key takes search down too. To answer with Gemini:
+#   LAWRAG_LLM_BACKEND=gemini LAWRAG_LLM_API_KEY=... (environment or .env overrides YAML).
+
+db:
+  dsn: postgresql://postgres:2006@127.0.0.1:5433/lawrag
+
+embedding:
+  backend: bge-m3
+  model_path: models/bge-m3
+  dim: 1024
+  device: mps
+  batch_size: 16
+  # Chunks are capped near 1000 estimated tokens (chunking.max_article_tokens);
+  # 4096 only adds padding cost on MPS, where there is no fp16 path.
+  max_length: 1024
+
+rerank:
+  backend: bge-reranker
+  model_path: models/bge-reranker-v2-m3
+  device: mps
+  # The cross-encoder dominates latency on MPS (fp32): 40 candidates took ~10 s
+  # per query, 20 take ~5 s, and the demo questions ranked the same either way.
+  top_k_in: 20
+
+llm:
+  backend: echo
+  # Gemini 3.x counts its reasoning tokens against max_tokens: at the default 1200
+  # the JSON answer for a long article (KoAP 592) was cut off at ~60 tokens.
+  max_tokens: 4096
+
+chunking:
+  generate_context_sentences: false
+
+log_level: INFO

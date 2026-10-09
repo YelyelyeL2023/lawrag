@@ -9,6 +9,10 @@ offline snapshot bundles; retrieval makes no outbound network call. `ask` calls
 the Gemini API, so the question and the retrieved statutory text leave the
 machine — `search` does not.
 
+**Setting it up?** [`GETTING_STARTED.md`](GETTING_STARTED.md) is the step-by-step
+guide — install, first run, training, troubleshooting. This file is the design
+rationale behind those steps.
+
 > **Two corpora, kept apart.** `data/adilet/` is a real snapshot of adilet.zan.kz
 > (fetched 2026-09-08). `tests/fixtures/synthetic/` is an **invented** fixture the
 > test suite runs on. They used to share `data/sample/`, where the fixture's

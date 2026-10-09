@@ -29,6 +29,7 @@ import numpy as np
 
 from ..config import EmbeddingConfig
 from ..gemini_http import post_with_retry, require_api_key
+from ..inference import MODEL_LOCK
 from ..logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -112,6 +113,10 @@ class BGEM3Embedder:
         return np.asarray(out["dense_vecs"], dtype=np.float32)
 
     def encode(self, texts: Sequence[str], is_query: bool = False) -> np.ndarray:
+        with MODEL_LOCK:
+            return self._encode_checked(texts, is_query)
+
+    def _encode_checked(self, texts: Sequence[str], is_query: bool) -> np.ndarray:
         vectors = self._encode_with(self._model, texts, is_query)
         bad = np.where(~np.isfinite(vectors).all(axis=1))[0]
         if len(bad) == 0 or not self._fp16:
@@ -198,12 +203,11 @@ class SentenceTransformerEmbedder:
         self.dim = int(self._model.get_sentence_embedding_dimension())
 
     def encode(self, texts: Sequence[str], is_query: bool = False) -> np.ndarray:
-        return np.asarray(
-            self._model.encode(list(texts), batch_size=self.cfg.batch_size,
-                               normalize_embeddings=self.cfg.normalize,
-                               show_progress_bar=False),
-            dtype=np.float32,
-        )
+        with MODEL_LOCK:
+            vectors = self._model.encode(list(texts), batch_size=self.cfg.batch_size,
+                                         normalize_embeddings=self.cfg.normalize,
+                                         show_progress_bar=False)
+        return np.asarray(vectors, dtype=np.float32)
 
 
 def build_embedder(cfg: EmbeddingConfig) -> Embedder:

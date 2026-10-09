@@ -327,3 +327,47 @@ def test_non_finite_embedding_is_refused_by_name():
     check_finite("koap/st1#ru@2026-01-01", np.zeros(4, dtype=np.float32))
     with pytest.raises(ValueError, match="koap/st278/p2#ru@2026-01-01"):
         check_finite("koap/st278/p2#ru@2026-01-01", np.array([0.1, float("nan"), 0.2]))
+
+
+def test_concurrent_requests_do_not_run_the_reranker_in_parallel():
+    # Two console requests at once ran bge-reranker on MPS from two threads and
+    # Metal aborted the server ("failed assertion _status <
+    # MTLCommandBufferStatusCommitted"). Forward passes are now serialised.
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from lawrag.config import RerankConfig
+    from lawrag.retrieve.rerank import FlagReranker
+
+    active, overlaps = [0], []
+
+    class SlowModel:
+        def compute_score(self, pairs, normalize=False):
+            active[0] += 1
+            overlaps.append(active[0] > 1)
+            time.sleep(0.05)
+            active[0] -= 1
+            return [0.0] * len(pairs)
+
+    reranker = FlagReranker.__new__(FlagReranker)
+    reranker.cfg, reranker._model = RerankConfig(), SlowModel()
+    hits = [SimpleNamespace(heading="h", display_text="t", rerank_score=None)]
+    threads = [threading.Thread(target=reranker.rerank, args=("q", hits, 1)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert overlaps and not any(overlaps)
+
+
+def test_kazakh_article_label_resolves_to_the_cited_source():
+    # Answering in Kazakh, the model cited "52-бап" (as the Kazakh text heads the
+    # article); the verifier compared it to "tk/st52" verbatim and rejected all
+    # three citations of a correct answer.
+    by_index = {1: {"article_node_id": "tk/st52"}, 2: {"article_node_id": "tk/st52-1"}}
+    resolve = CitationVerifier._resolve
+    assert resolve({"source": 1, "article": "52-бап"}, by_index) == "tk/st52"
+    assert resolve({"source": 2, "article": "52-1-бап"}, by_index) == "tk/st52-1"
+    assert resolve({"source": 1, "article": "Статья 52"}, by_index) == "tk/st52"
+    assert resolve({"source": 1, "article": "53-бап"}, by_index) is None

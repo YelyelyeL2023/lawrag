@@ -35,6 +35,18 @@ _PUNCT = str.maketrans({"«": '"', "»": '"', "“": '"', "”": '"',
 
 MIN_QUOTE_CHARS = 12
 
+# Models answering in Kazakh cite articles the way the Kazakh text heads them
+# ("52-бап"), and in Russian sometimes as "Статья 52" / "ст. 52"; node ids hold
+# the bare number ("tk/st52", "tk/st52-1").
+_ARTICLE_LABEL = re.compile(r"^(?:стать[яи]|ст\.)?\s*(\d+(?:-\d+)*)(?:(?:-|\s+)бап)?\.?$",
+                            re.IGNORECASE)
+
+
+def article_number(raw: object) -> str:
+    label = str(raw or "").strip()
+    match = _ARTICLE_LABEL.match(label)
+    return match.group(1) if match else label
+
 
 def normalize(text: str) -> str:
     text = unicodedata.normalize("NFKC", text).translate(_PUNCT).lower()
@@ -147,7 +159,7 @@ class CitationVerifier:
         index = raw.get("source")
         if isinstance(index, int) and index in by_index:
             node_id = by_index[index]["article_node_id"]
-            article = str(raw.get("article") or "").strip()
+            article = article_number(raw.get("article"))
             if article and not node_id.endswith(f"/st{article}"):
                 return None
             act = (raw.get("act_code") or "").strip()
@@ -155,7 +167,7 @@ class CitationVerifier:
                 return None
             return node_id
         act = (raw.get("act_code") or "").strip()
-        article = str(raw.get("article") or "").strip()
+        article = article_number(raw.get("article"))
         if act and article:
             return f"{act}/st{article}"
         # Last resort: a bare article number that matches exactly one source.

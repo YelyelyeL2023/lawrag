@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Protocol, Sequence
 
 from ..config import RerankConfig
+from ..inference import MODEL_LOCK
 from ..logging_setup import get_logger
 from .hybrid import Hit
 
@@ -46,7 +47,8 @@ class FlagReranker:
             return []
         window = list(hits)[: self.cfg.top_k_in]
         pairs = [[query, f"{h.heading}\n{h.display_text}"] for h in window]
-        scores = self._model.compute_score(pairs, normalize=False)
+        with MODEL_LOCK:
+            scores = self._model.compute_score(pairs, normalize=False)
         if isinstance(scores, float):
             scores = [scores]
         for hit, score in zip(window, scores):
@@ -68,7 +70,8 @@ class Qwen3Reranker:
             return []
         window = list(hits)[: self.cfg.top_k_in]
         pairs = [(query, f"{h.heading}\n{h.display_text}") for h in window]
-        scores = self._model.predict(pairs, show_progress_bar=False)
+        with MODEL_LOCK:
+            scores = self._model.predict(pairs, show_progress_bar=False)
         for hit, score in zip(window, scores):
             hit.rerank_score = float(score)
         return sorted(window, key=lambda h: -(h.rerank_score or 0.0))[:top_k]

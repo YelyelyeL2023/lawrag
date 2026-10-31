@@ -122,3 +122,87 @@ def test_fetcher_refuses_the_javascript_shell():
     assert is_app_shell(shell)
     page = "<html><body><p>Статья 1. Предмет регулирования</p><p>1. Настоящий Кодекс регулирует.</p></body></html>"
     assert not is_app_shell(page)
+
+
+# ------------------------------------------------- baseline experiment --
+
+def test_bm25_ranks_the_matching_text_first():
+    from lawrag.train.lexical import BM25, tokenize
+
+    docs = ["Штраф за нарушение срока постановки на учет",
+            "Порядок регистрации юридических лиц",
+            "Тіркеу есебіне қою мерзімі"]
+    model = BM25().fit(docs)
+    scores = model.score(["штрафом за нарушение сроков", "мерзімін"])
+    assert scores.shape == (2, 3)
+    assert scores[0].argmax() == 0          # inflected forms match through the prefix
+    assert scores[1].argmax() == 2
+    assert model.score(["совершенно незнакомые слова"]).max() == 0
+    assert tokenize("Штрафом", prefix=5) == ["штраф"]
+
+
+def test_bm25_evaluates_through_the_same_harness(mined):
+    from lawrag.train.evaluate import evaluate
+
+    pairs, corpus = mined
+    res = evaluate("bm25", pairs, corpus.to_records())
+    assert res.overall.n == len(pairs) == len(res.queries)
+    assert {k.kind for k in res.per_lang} <= {"ru", "kk"}
+    assert all(q["rank"] >= 1 for q in res.queries)
+    # Titles are copied verbatim into the chunk text: lexical search finds them.
+    heading = next(k for k in res.per_kind if k.kind == "heading")
+    assert heading.r10 > 0.8
+
+
+def test_miss_classification():
+    from lawrag.train.experiment import classify_miss
+
+    q = {"article": "koap/st278", "top1": "koap/st280"}
+    assert classify_miss(q) == "same code, article within ±5"
+    assert classify_miss({**q, "top1": "koap/st12"}) == "same code, distant article"
+    assert classify_miss({**q, "top1": "nk/st278"}) == "different code"
+    assert classify_miss({**q, "top1": "koap/st278"}) == "right article, other language"
+
+
+def test_paired_statistics():
+    from lawrag.train.evaluate import EvalResult
+    from lawrag.train.experiment import bootstrap_ci, metric_table
+
+    lo, hi = bootstrap_ci(np.array([1.0] * 50 + [0.0] * 50))
+    assert lo < 0.5 < hi
+    tuned = EvalResult("t", queries=[{"rank": r} for r in (1, 1, 2, 30)])
+    base = EvalResult("b", queries=[{"rank": r} for r in (1, 3, 2, 40)])
+    stats = metric_table({"base": base, "tuned": tuned})
+    assert stats["systems"]["tuned"]["recall@1"][0] == 0.5
+    paired = stats["paired"]["tuned-base"]
+    assert (paired["better"], paired["worse"]) == (1, 0)
+    assert paired["mrr@10"][0] == pytest.approx((1 - 1 / 3) / 4)
+
+
+def test_experiment_runs_end_to_end_without_weights(tmp_path):
+    """The whole pipeline on the fixture: mines pairs, skips the dense models
+    it has no weights for, and still writes a report from BM25."""
+    from lawrag.train.experiment import run_experiment
+
+    cfg = Config()
+    summary = run_experiment(cfg, corpus_dir=SAMPLE, pairs_dir=tmp_path / "pairs",
+                             model_dir=tmp_path / "no-weights", base_name="bge-m3",
+                             tuned_name="tuned", out_dir=tmp_path / "out", train=False,
+                             dev_fraction=0.3)
+    assert list(summary["systems"]) == ["bm25"]
+    assert summary["data"]["shared_articles"] == 0
+    assert (tmp_path / "out" / "results.md").read_text(encoding="utf-8").count("BM25") >= 2
+    assert (tmp_path / "out" / "results.json").exists()
+
+
+def test_mining_artefacts_and_superseded_code_are_recognised():
+    from lawrag.train.experiment import classify_miss, query_flag
+
+    note = {"lang": "ru", "query": "Заголовок предусматривается в редакции Закона РК от "
+                                   "12.06.2026 № 312-VIII (вводится в действие с 01.01.2027)."}
+    orphan = {"lang": "kk", "query": "осы Кодекстің ына сәйкес кеден органы жіберген хабарлама"}
+    clean = {"lang": "ru", "query": "за исключением случаев, предусмотренных настоящего Кодекса"}
+    assert query_flag(note) == "amendment footnote"
+    assert query_flag(orphan) == "kk orphan suffix"
+    assert query_flag(clean) == "clean"
+    assert classify_miss({"article": "nk/st401", "top1": "nk2017/st342"}).startswith("superseded")

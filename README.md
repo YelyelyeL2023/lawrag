@@ -444,6 +444,43 @@ your users. The trained directory is `models/bge-m3-lawrag`, selected with
 `EMBEDDING_MODEL=bge-m3-lawrag` in `docker/.env`; `config/host-gpu.yaml`
 runs it from a host interpreter on the card.
 
+**The midterm baseline experiment** reruns this with a stricter protocol —
+dev articles are kept out of the training *negatives* too — and adds a BM25
+reference, confidence intervals and an error analysis, all from one command:
+
+```bash
+lawrag experiment          # docker: docker compose run --rm cli experiment --model-dir /models
+```
+
+It writes `reports/midterm/` (tables, figures, `results.json`); the write-up
+is [`docs/midterm/REPORT.md`](docs/midterm/REPORT.md). On the clean protocol
+the fine-tuned model scores MRR@10 0.607 vs 0.567 zero-shot and 0.424 for
+BM25, and the analysis finds the model partly matching article numbers
+instead of meaning — the next fix is in the pair miner.
+
+**The final experiment** compares, tunes and adapts four model families on
+one train / validation / test split (test = the midterm's dev split,
+unchanged): BM25 (216-point grid over stem length, k1, b), bge-m3
+(3 × 3 grid over learning rate and trainable layers, then the winner
+retrained), a learned BM25 + dense hybrid (gradient boosting and logistic
+regression, randomized / grid search with group CV) and Qwen3-0.6B as a
+yes/no reranker adapted with LoRA:
+
+```bash
+lawrag final-experiment --model-dir $MODEL_DIR            # ~5.5 h on an 8 GB laptop GPU
+powershell -File scripts/run_final_experiment.ps1 -ModelDir D:/models   # same, detached, on Windows
+```
+
+Every stage caches its result in `reports/final/stages/`, so an interrupted
+run resumes. It writes `reports/final/` (tables, figures, `results.json`);
+the write-up is [`docs/final/REPORT.md`](docs/final/REPORT.md). The tuned
+fine-tune is the improved model: test MRR@10 0.630 (midterm config 0.607,
+zero-shot 0.567, tuned BM25 0.436). The LoRA reranker lifts Qwen3-0.6B from
+0.274 zero-shot to 0.583 but stays below its input — its tokenizer needs
+1.9× the tokens for this text, so most inputs are truncated. QLoRA
+(`--qlora`) is off by default: bitsandbytes' 4-bit kernel crashed the GPU
+driver on the reference machine.
+
 After switching: point `LAWRAG_EMBEDDING_MODEL_PATH` at the new directory
 (it loads through both the `bge-m3` and `sentence-transformers` backends —
 the base model's sparse and ColBERT heads are copied alongside), re-ingest so
@@ -536,7 +573,9 @@ or as `lawrag <command>` from a host interpreter. All of them take `--config`.
 | `serve [--host] [--port]` | run the API and console |
 | `train-pairs <dir> [--doc2query]` | mine training pairs from the corpus into `data/train/` |
 | `train --base --out` | contrastive fine-tune of the embedder |
-| `train-eval <model>...` | held-out dense retrieval comparison; no database |
+| `train-eval <model>...` | held-out retrieval comparison (`bm25` for the lexical baseline); no database |
+| `experiment [corpus] [--model-dir] [--no-train]` | the baseline experiment end to end: pairs → fine-tune → BM25 / zero-shot / fine-tuned on dev → `reports/midterm/` |
+| `final-experiment [--model-dir] [--no-train] [--qlora]` | the final experiment: BM25 / fine-tuning / hybrid searches on validation, final fine-tune, LoRA LLM reranker, all on test → `reports/final/` |
 
 `scripts/resume_ingest.py` finishes an interrupted ingest: `--embed` fills in
 missing embeddings, `--link` aligns RU↔KK chunks, `--index` builds the HNSW

@@ -26,6 +26,15 @@ models = [
   # Only `lawrag train` needs this; it rides with the weights stack because
   # that is the image with a GPU.
   "datasets>=2.19",
+  # `lawrag experiment`: the BM25 baseline (sparse matrices) and the figures.
+  "scipy>=1.10",
+  "matplotlib>=3.7",
+  # `lawrag final-experiment`: grid / randomized search and the learned
+  # hybrid (scikit-learn), the QLoRA reranker (peft + bitsandbytes 4-bit).
+  "scikit-learn>=1.4",
+  "peft>=0.12",
+  "bitsandbytes>=0.46",
+  "accelerate>=0.30",
 ]
 dev = ["pytest>=8.0"]
 

@@ -15,7 +15,7 @@ from ..models import Lang, OPEN_ENDED
 from ..retrieve.engine import RetrievalEngine, RetrievalResult
 from ..verify.citations import CitationVerifier, Verdict
 from . import prompts
-from .llm import build_llm
+from .llm import LLM, build_llm
 
 log = get_logger(__name__)
 
@@ -75,8 +75,22 @@ class AnswerService:
         self.cfg = cfg
         self.engine = RetrievalEngine(cfg)
         self.db = Database(cfg)
-        self.llm = build_llm(cfg.llm)
+        self._llm: LLM | None = None
         self.verifier = CitationVerifier(self.db)
+
+    @property
+    def llm(self) -> LLM:
+        # Built on first use, not here: the API's /search goes through this
+        # service for its engine, and retrieval must keep working when the
+        # generator is misconfigured (no API key) — that failure belongs to
+        # /ask, where it becomes a generation_failed abstention.
+        if self._llm is None:
+            self._llm = build_llm(self.cfg.llm)
+        return self._llm
+
+    @llm.setter
+    def llm(self, value: LLM) -> None:
+        self._llm = value
 
     def ask(self, question: str, *, as_of: date | None = None,
             lang: Lang | None = None, log_query: bool = True) -> Answer:
@@ -133,7 +147,11 @@ class AnswerService:
             answer.abstained = True
             answer.abstain_reason = f"generation_failed: {exc}"
             answer.escalate = True
-            answer.text = prompts.NO_SOURCES[qlang]
+            # Retrieval found provisions; it is the generator that failed.
+            # NO_SOURCES here would tell the user the law is silent.
+            answer.text = prompts.GENERATION_FAILED[qlang]
+            answer.verified = False
+            answer.verification = "not_verified: generation_failed"
             self._finish(answer, result, started, log_query)
             return answer
         answer.timings_ms["generate"] = int((time.perf_counter() - t) * 1000)

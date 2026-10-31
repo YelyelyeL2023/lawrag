@@ -129,3 +129,37 @@ def test_echo_backend_abstains_rather_than_inventing(live_db):
     assert answer.abstained
     assert answer.abstain_reason == "no_model_loaded"
     assert answer.escalate
+
+
+class FailingLLM:
+    def complete(self, prompt: str, **_kw) -> str:
+        raise ConnectionError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred")
+
+
+def test_generation_failure_is_not_reported_as_missing_law(live_db):
+    from lawrag.generate import prompts
+
+    service = AnswerService(live_db)
+    service.llm = FailingLLM()
+    answer = service.ask("В какой срок нужно подать заявление о постановке на "
+                         "регистрационный учет?", log_query=False)
+
+    assert answer.abstained and answer.sources
+    assert answer.abstain_reason.startswith("generation_failed")
+    assert answer.text == prompts.GENERATION_FAILED[Lang.RU]
+    assert answer.text != prompts.NO_SOURCES[Lang.RU]
+    assert answer.verified is False
+
+
+def test_missing_api_key_breaks_answers_not_retrieval(live_db):
+    import copy
+
+    cfg = copy.deepcopy(live_db)
+    cfg.llm.backend, cfg.llm.api_key = "gemini", ""
+    service = AnswerService(cfg)   # must not raise: /search builds this too
+
+    question = "В какой срок нужно подать заявление о постановке на регистрационный учет?"
+    assert service.engine.retrieve(question).hits
+    answer = service.ask(question, log_query=False)
+    assert answer.abstained and answer.sources
+    assert "LAWRAG_LLM_API_KEY" in answer.abstain_reason

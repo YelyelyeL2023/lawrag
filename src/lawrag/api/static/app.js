@@ -287,7 +287,9 @@ const ABSTAIN_TEXT = {
   no_matching_provisions: 'в корпусе нет норм по этому вопросу',
   no_model_loaded: 'генератор не настроен',
 };
-const _REFUSED = /10061|refused|ConnectError|ConnectTimeout|Connection ?(refused|error)|Max retries/i;
+// Also the hosted-API failures: a TLS handshake reset by a filtering network
+// (SSL ... EOF), a timeout, and a server started without its key.
+const _REFUSED = /10061|refused|ConnectError|ConnectTimeout|Connection ?(refused|error|reset)|Max retries|SSL|UNEXPECTED_EOF|Timeout|no API key/i;
 
 function abstainText(reason) {
   const r = String(reason || '');
@@ -600,7 +602,7 @@ function renderAnswer(out) {
     out.append(h('div.banner.bad', { style: 'margin-top:14px;margin-bottom:0' },
       icon('i-warn'),
       h('div',
-        h('strong', 'Генератор не запущен. '),
+        h('strong', 'Генератор недоступен. '),
         'Нормы найдены и приведены ниже, но сформулировать ответ не удалось: ',
         'Gemini API недоступен.',
         h('div', { style: 'margin-top:7px' },

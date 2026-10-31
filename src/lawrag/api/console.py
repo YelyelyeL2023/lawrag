@@ -148,6 +148,11 @@ def _probe_llm(c: Config) -> dict:
 
     base = c.llm.base_url.rstrip("/")
     out = {"required": True, "reachable": False, "error": "", "base_url": base}
+    if not c.llm.api_key:
+        # No round trip: without a key it can only come back as a 4xx that
+        # hides the actual cause.
+        out["error"] = "no API key: set LAWRAG_LLM_API_KEY"
+        return out
     try:
         import httpx
 

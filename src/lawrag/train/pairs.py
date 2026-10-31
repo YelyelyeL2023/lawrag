@@ -363,6 +363,27 @@ def split_pairs(pairs: list[Pair], dev_fraction: float = 0.05,
     return train, dev
 
 
+def carve_validation(train: list[Pair], fraction: float = 0.05, seed: int = 29,
+                     ) -> tuple[list[Pair], list[Pair]]:
+    """Split the train pairs once more, by article, into (fit, validation).
+
+    The held-out test split stays exactly what ``split_pairs`` made it, so
+    final numbers remain comparable with every earlier report; validation is
+    a second, independent hash bucket of the *train* articles, used for every
+    model-selection decision (hyper-parameters, fusion weights). ``fraction``
+    is of the train articles. Validation keeps only the query kinds the test
+    split has, so the two measure the same thing.
+    """
+    fit: list[Pair] = []
+    val: list[Pair] = []
+    for p in train:
+        (val if _dev_article(p.article, fraction, seed) else fit).append(p)
+    return fit, [p for p in val if p.kind in VALIDATION_KINDS]
+
+
+VALIDATION_KINDS = frozenset({"heading", "xref", "xlang"})
+
+
 def dedupe(pairs: Iterable[Pair]) -> list[Pair]:
     seen: set[tuple[str, str]] = set()
     out: list[Pair] = []

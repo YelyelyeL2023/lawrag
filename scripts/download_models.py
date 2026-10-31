@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Download the production embedder + reranker for lawrag.
 
-Run this on the CONNECTED side (it needs internet). It places two ready-to-load
+Run this on the CONNECTED side (it needs internet). It places ready-to-load
 model directories under MODEL_DIR, matching the paths in config/default.yaml:
 
     MODEL_DIR/bge-m3                 -> embedding.model_path
     MODEL_DIR/bge-reranker-v2-m3     -> rerank.model_path
+    MODEL_DIR/Qwen3-0.6B             -> the LLM reranker of `lawrag final-experiment`
 
 Those directories are self-contained and are what you carry across the air gap.
 The query path never downloads; it loads these local folders.
@@ -30,6 +31,7 @@ MODEL_DIR = Path(os.environ.get("MODEL_DIR", "models"))
 TARGETS = {
     "BAAI/bge-m3": ("bge-m3", ["onnx/*", "*.onnx", "imgs/*", "*.h5", "*.tflite", "*.msgpack"]),
     "BAAI/bge-reranker-v2-m3": ("bge-reranker-v2-m3", ["onnx/*", "*.onnx", "*.h5", "*.tflite", "*.msgpack"]),
+    "Qwen/Qwen3-0.6B": ("Qwen3-0.6B", ["*.md", "*.gguf"]),
 }
 
 

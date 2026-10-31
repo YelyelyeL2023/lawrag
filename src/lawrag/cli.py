@@ -492,6 +492,7 @@ def train_cmd(pairs: Path = typer.Option(Path("data/train"), help="Directory wri
               hard_negatives: bool = typer.Option(True, help="Mine one hard negative per pair with the base model."),
               max_pairs: Optional[int] = typer.Option(None, help="Cap the training set (time budget)."),
               device: Optional[str] = typer.Option(None, help="cuda | mps | cpu; auto (cuda or cpu) if omitted."),
+              hold_out_dev: bool = typer.Option(True, help="Keep dev articles out of the negatives too."),
               config: Optional[str] = ConfigOpt):
     """Fine-tune the embedder on the mined pairs.
 
@@ -512,7 +513,12 @@ def train_cmd(pairs: Path = typer.Option(Path("data/train"), help="Directory wri
         train_layers=train_layers if train_layers > 0 else 10**6,
         hard_negatives=hard_negatives, max_pairs=max_pairs, device=device,
     )
-    result = finetune(settings, train_pairs, corpus, cache_dir=pairs / "cache")
+    held_out = frozenset()
+    dev_path = pairs / "pairs.dev.jsonl"
+    if hold_out_dev and dev_path.exists():
+        held_out = frozenset(p.article for p in read_pairs(dev_path))
+    result = finetune(settings, train_pairs, corpus, cache_dir=pairs / "cache",
+                      exclude_articles=held_out)
     console.print(f"[green]saved[/green] {result}")
     console.print("next: LAWRAG_EMBEDDING_MODEL_PATH=<that path>, re-ingest, then `lawrag calibrate`")
 
@@ -541,6 +547,84 @@ def train_eval_cmd(models: list[Path] = typer.Argument(..., help="Model director
     print_results(results, console)
     if out:
         save_results(out, results)
+
+
+@app.command("experiment")
+def experiment_cmd(corpus: Path = typer.Argument(Path("data/adilet"), help="Corpus directory to mine pairs from."),
+                   pairs: Path = typer.Option(Path("data/train"), help="Pairs directory (created if missing)."),
+                   model_dir: Optional[Path] = typer.Option(None, help="Where the weights live; default $LAWRAG_MODEL_DIR, $MODEL_DIR or models/."),
+                   base: str = typer.Option("bge-m3", help="Base model directory name inside --model-dir."),
+                   tuned: str = typer.Option("bge-m3-lawrag-midterm", help="Fine-tuned model directory name inside --model-dir."),
+                   out: Path = typer.Option(Path("reports/midterm"), help="Where tables, figures and results.json go."),
+                   train: bool = typer.Option(True, help="Fine-tune when the tuned model does not exist yet."),
+                   device: Optional[str] = typer.Option(None, help="cuda | mps | cpu; auto if omitted."),
+                   config: Optional[str] = ConfigOpt):
+    """The whole baseline experiment: pairs -> fine-tune -> evaluate -> report.
+
+    Each stage is skipped when its output already exists, so a second run
+    only re-evaluates. Compares BM25, stock bge-m3 and the fine-tuned bge-m3
+    on the held-out dev articles and writes results.md, results.json and the
+    figures to --out.
+    """
+    from .train.experiment import default_model_dir, run_experiment
+
+    cfg = _cfg(config)
+    summary = run_experiment(cfg, corpus_dir=corpus, pairs_dir=pairs,
+                             model_dir=model_dir or default_model_dir(), base_name=base,
+                             tuned_name=tuned, out_dir=out, train=train, device=device)
+    table = Table(title=f"dev set — {summary['data']['dev']['pairs']:,} queries, "
+                        f"{summary['data']['dev']['articles']} held-out articles")
+    for col in ("system", "Recall@1", "Recall@10", "MRR@10"):
+        table.add_column(col, justify="left" if col == "system" else "right")
+    for name, m in summary["stats"]["systems"].items():
+        table.add_row(name, *(f"{m[k][0]:.3f}" for k in ("recall@1", "recall@10", "mrr@10")))
+    console.print(table)
+    console.print(f"[green]report[/green] {out / 'results.md'}")
+
+
+@app.command("final-experiment")
+def final_experiment_cmd(
+        pairs: Path = typer.Option(Path("data/train"), help="Pairs directory written by train-pairs / experiment."),
+        model_dir: Optional[Path] = typer.Option(None, help="Where the weights live; default $LAWRAG_MODEL_DIR, $MODEL_DIR or models/."),
+        out: Path = typer.Option(Path("reports/final"), help="Where tables, figures, results.json and stage caches go."),
+        base: str = typer.Option("bge-m3", help="Base bi-encoder inside --model-dir."),
+        midterm: str = typer.Option("bge-m3-lawrag-midterm", help="The midterm fine-tuned model (compared, not retrained)."),
+        final: str = typer.Option("bge-m3-lawrag-final", help="Where the tuned fine-tune is written."),
+        llm: str = typer.Option("Qwen3-0.6B", help="The LLM reranker's base model."),
+        adapter: str = typer.Option("qwen3-0.6b-lawrag-lora", help="Where the LoRA adapter is written."),
+        qlora: bool = typer.Option(False, help="Store the frozen LLM in 4-bit NF4 (QLoRA). Off by default: the bitsandbytes 4-bit kernel crashed the GPU driver on the reference machine."),
+        train: bool = typer.Option(True, help="Run training stages whose output is missing."),
+        ft_grid: bool = typer.Option(True, help="Run the fine-tuning grid search."),
+        rerank: bool = typer.Option(True, help="Run the reranker stages."),
+        rerank_queries: int = typer.Option(4000, help="Training queries (groups) for the LoRA reranker."),
+        keep_trial_weights: bool = typer.Option(False, help="Keep each grid trial's weights (2.2 GB each)."),
+        device: Optional[str] = typer.Option(None, help="cuda | cpu; auto if omitted."),
+        config: Optional[str] = ConfigOpt):
+    """The final experiment: comparison, tuning, fine-tuning, transfer, LoRA.
+
+    One train / validation / test split for everything; every selection on
+    validation, the test split scored once. Each stage caches its result in
+    --out/stages and is skipped on the next run, so an interrupted run
+    resumes. Writes results.md, results.json and the figures to --out.
+    """
+    from .train.experiment import default_model_dir
+    from .train.final import run_final, stay_awake
+
+    cfg = _cfg(config)
+    with stay_awake():
+        summary = run_final(cfg, pairs_dir=pairs, model_dir=model_dir or default_model_dir(),
+                            out_dir=out, base_name=base, midterm_name=midterm, final_name=final,
+                            llm_name=llm, adapter_name=adapter, qlora=qlora, device=device,
+                            train=train, ft_grid=ft_grid, rerank=rerank,
+                            rerank_queries=rerank_queries, keep_trial_weights=keep_trial_weights)
+    table = Table(title=f"test split — {summary['data']['test']['pairs']:,} queries")
+    for col in ("system", "Recall@1", "Recall@10", "MRR@10"):
+        table.add_column(col, justify="left" if col == "system" else "right")
+    for name, m in summary["systems"].items():
+        table.add_row(m["label"], *(f"{m['overall'][k][0]:.3f}"
+                                    for k in ("recall@1", "recall@10", "mrr@10")))
+    console.print(table)
+    console.print(f"[green]report[/green] {out / 'results.md'}")
 
 
 if __name__ == "__main__":

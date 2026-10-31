@@ -51,6 +51,12 @@ class TrainSettings:
     batch_size: int = 32
     mini_batch_size: int = 8
     learning_rate: float = 2e-5
+    # The optimiser and schedule are the sentence-transformers / HF Trainer
+    # defaults, spelled out so that the report states them, not implies them.
+    optim: str = "adamw_torch"
+    weight_decay: float = 0.0
+    lr_scheduler: str = "linear"
+    warmup_ratio: float = 0.1
     max_seq_length: int = 512
     train_layers: int = 8
     hard_negatives: bool = True
@@ -62,23 +68,33 @@ class TrainSettings:
 
 def mine_hard_negatives(base: str, pairs: list[Pair], corpus: list[dict], *,
                         cache_dir: Path | None, device: str | None,
-                        top_k: int = 20, batch_size: int = 32) -> list[str | None]:
+                        top_k: int = 20, batch_size: int = 32,
+                        exclude_articles: frozenset[str] = frozenset()) -> list[str | None]:
     """For each pair, the text of the best-ranked chunk of a *different* article
-    under the base model, or None when nothing wrong ranks in the top k."""
+    under the base model, or None when nothing wrong ranks in the top k.
+
+    Chunks of ``exclude_articles`` (the held-out dev articles) are never
+    picked, so no dev text reaches the trainer even as a negative.
+    """
     model = load_model(base, device)
     texts = [c["text"] for c in corpus]
     articles = [c["article"] for c in corpus]
+    # The full corpus is encoded (and cached) once; excluded rows are masked
+    # out of the scores rather than dropped, so the cache stays valid.
     doc_emb = encode_corpus(model, base, texts, cache_dir, batch_size)
+    excluded = np.array([a in exclude_articles for a in articles])
     out: list[str | None] = []
     step = 256
     for start in range(0, len(pairs), step):
         batch = pairs[start:start + step]
         q_emb = encode(model, [p.query for p in batch], batch_size=batch_size)
         scores = q_emb @ doc_emb.T
+        scores[:, excluded] = -np.inf
         top = np.argpartition(-scores, min(top_k, scores.shape[1] - 1), axis=1)[:, :top_k]
         for i, p in enumerate(batch):
             order = top[i][np.argsort(-scores[i, top[i]])]
-            neg = next((int(j) for j in order if articles[j] != p.article), None)
+            neg = next((int(j) for j in order
+                        if articles[j] != p.article and not excluded[j]), None)
             out.append(texts[neg] if neg is not None else None)
     del model
     return out
@@ -115,7 +131,10 @@ def _git_commit() -> str:
 
 
 def finetune(settings: TrainSettings, pairs: list[Pair], corpus: list[dict], *,
-             cache_dir: Path | None = None) -> Path:
+             cache_dir: Path | None = None,
+             exclude_articles: frozenset[str] = frozenset()) -> Path:
+    """Train and save the model; ``exclude_articles`` are the held-out dev
+    articles, kept out of the negatives as well as the positives."""
     import random
 
     import torch
@@ -131,14 +150,16 @@ def finetune(settings: TrainSettings, pairs: list[Pair], corpus: list[dict], *,
         pairs = pairs[:settings.max_pairs]
     device = settings.device or ("cuda" if torch.cuda.is_available() else "cpu")
     chunk_text = {c["id"]: c["text"] for c in corpus}
-    pairs = [p for p in pairs if p.pos in chunk_text]
-    log.info("training on %d pairs, device %s", len(pairs), device)
+    pairs = [p for p in pairs if p.pos in chunk_text and p.article not in exclude_articles]
+    log.info("training on %d pairs, device %s, %d articles held out", len(pairs), device,
+             len(exclude_articles))
 
     negatives: list[str | None] = [None] * len(pairs)
     if settings.hard_negatives:
         started = time.perf_counter()
         negatives = mine_hard_negatives(settings.base, pairs, corpus, cache_dir=cache_dir,
-                                        device=device, top_k=settings.hard_negative_top_k)
+                                        device=device, top_k=settings.hard_negative_top_k,
+                                        exclude_articles=exclude_articles)
         found = sum(1 for n in negatives if n)
         log.info("hard negatives for %d/%d pairs in %ds", found, len(pairs),
                  int(time.perf_counter() - started))
@@ -147,7 +168,7 @@ def finetune(settings: TrainSettings, pairs: list[Pair], corpus: list[dict], *,
 
     # A row without a mined negative gets a random other chunk: the loss wants
     # a rectangular dataset, and a random negative is merely uninformative.
-    all_texts = list(chunk_text.values())
+    all_texts = [c["text"] for c in corpus if c["article"] not in exclude_articles]
     rows = {"anchor": [], "positive": [], "negative": []}
     for p, neg in zip(pairs, negatives):
         rows["anchor"].append(p.query)
@@ -178,7 +199,10 @@ def finetune(settings: TrainSettings, pairs: list[Pair], corpus: list[dict], *,
         num_train_epochs=settings.epochs,
         per_device_train_batch_size=settings.batch_size,
         learning_rate=settings.learning_rate,
-        warmup_ratio=0.1,
+        optim=settings.optim,
+        weight_decay=settings.weight_decay,
+        lr_scheduler_type=settings.lr_scheduler,
+        warmup_ratio=settings.warmup_ratio,
         fp16=device.startswith("cuda"),
         batch_sampler=BatchSamplers.NO_DUPLICATES,
         logging_steps=20,
@@ -209,8 +233,15 @@ def finetune(settings: TrainSettings, pairs: list[Pair], corpus: list[dict], *,
         "pairs": len(pairs),
         "kinds": {k: sum(1 for p in pairs if p.kind == k) for k in sorted({p.kind for p in pairs})},
         "settings": asdict(settings),
+        # InfoNCE over in-batch + hard negatives; cosine similarity x scale,
+        # i.e. a softmax temperature of 1/scale.
+        "loss": f"{type(loss).__name__} (scale {loss.scale:g}, cosine similarity)",
+        "held_out_articles": len(exclude_articles),
         "trainable_parameters": trainable,
+        "frozen_parameters": frozen,
         "train_seconds": elapsed,
+        # Per-logging-step loss, learning rate and grad norm: the training curve.
+        "log_history": trainer.state.log_history,
         "git_commit": _git_commit(),
         "trained_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
